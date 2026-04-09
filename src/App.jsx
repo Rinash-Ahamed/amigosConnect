@@ -25,7 +25,7 @@ const storage = {
         let data = docSnap.data().value;
         
         // Auto-Cleanup: Remove records older than 90 days on read
-        if (Array.isArray(data) && (key === "timelogs" || key === "leaves")) {
+        if (Array.isArray(data) && (key === "timelogs" || key === "leaves" || key === "advances")) {
           const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
           data = data.filter(item => (item.clockIn || item.appliedAt || item.from) > ninetyDaysAgo);
         }
@@ -43,7 +43,7 @@ const storage = {
       let dataToSave = val;
       
       // Auto-Cleanup: Remove records older than 90 days on write
-      if (Array.isArray(val) && (key === "timelogs" || key === "leaves")) {
+      if (Array.isArray(val) && (key === "timelogs" || key === "leaves" || key === "advances")) {
         const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
         dataToSave = val.filter(item => (item.clockIn || item.appliedAt || item.from) > ninetyDaysAgo);
       }
@@ -436,6 +436,10 @@ function EmployeeView({ employee, onLogout }) {
   const [leaveErr, setLeaveErr] = useState("");
   const [leaveSent, setLeaveSent] = useState(false);
   const [settings, setSettings] = useState({ leavesEnabled: true });
+  const [advances, setAdvances] = useState([]);
+  const [advanceForm, setAdvanceForm] = useState({ amount: "", reason: "" });
+  const [advanceErr, setAdvanceErr] = useState("");
+  const [advanceSent, setAdvanceSent] = useState(false);
 
   useEffect(() => {
     const iv = setInterval(() => setNow(new Date()), 1000);
@@ -451,6 +455,9 @@ function EmployeeView({ employee, onLogout }) {
       setActive(open || null);
       const allLeaves = (await storage.get("leaves")) || [];
       setLeaves(allLeaves.filter(l => l.employeeId === employee.id));
+      const allAdvances = (await storage.get("advances")) || [];
+      setAdvances(allAdvances.filter(a => a.employeeId === employee.id));
+      
       const st = await storage.get("appSettings");
       if (st) {
         setSettings(st);
@@ -506,6 +513,31 @@ function EmployeeView({ employee, onLogout }) {
     setTimeout(() => setLeaveSent(false), 4000);
   };
 
+  const submitAdvance = async () => {
+    setAdvanceErr("");
+    if (!advanceForm.amount || !advanceForm.reason.trim()) {
+      setAdvanceErr("All fields are required."); return;
+    }
+    if (isNaN(advanceForm.amount) || Number(advanceForm.amount) <= 0) {
+      setAdvanceErr("Enter a valid advance amount."); return;
+    }
+    const req = {
+      id: uid(),
+      employeeId: employee.id,
+      name: employee.name,
+      amount: Number(advanceForm.amount),
+      reason: advanceForm.reason,
+      status: "pending",
+      appliedAt: new Date().toISOString(),
+    };
+    const allAdvances = (await storage.get("advances")) || [];
+    await storage.set("advances", [...allAdvances, req]);
+    setAdvances(p => [...p, req]);
+    setAdvanceForm({ amount:"", reason:"" });
+    setAdvanceSent(true);
+    setTimeout(() => setAdvanceSent(false), 4000);
+  };
+
   const weekLogs = logs.filter(l => {
     const d = new Date(l.clockIn);
     const s = new Date(); s.setDate(s.getDate() - s.getDay()); s.setHours(0,0,0,0);
@@ -520,6 +552,7 @@ function EmployeeView({ employee, onLogout }) {
 
   const leaveTypeColor = (t) => ({Casual:"tag-blue", Sick:"tag-red", Emergency:"tag-amber"}[t] || "tag-muted");
   const leaveStatusColor = (s) => ({pending:"tag-amber", approved:"tag-green", rejected:"tag-red"}[s] || "tag-muted");
+  const advanceStatusColor = (s) => ({pending:"tag-amber", paid:"tag-green", rejected:"tag-red"}[s] || "tag-muted");
 
   return (
     <div style={{minHeight:"100vh",background:"var(--bg)"}}>
@@ -551,7 +584,7 @@ function EmployeeView({ employee, onLogout }) {
 
       {/* Sub nav */}
       <div style={{display:"flex",gap:4,padding:"14px 20px 0",borderBottom:"1px solid var(--border)"}}>
-        {[{id:"home",label:"Dashboard"}, ...(settings.leavesEnabled !== false ? [{id:"leave",label:"Leave Requests"}] : [])].map(t => (
+        {[{id:"home",label:"Dashboard"}, ...(settings.leavesEnabled !== false ? [{id:"leave",label:"Leave Requests"}] : []), {id:"advance",label:"Advance"}].map(t => (
           <button key={t.id} onClick={() => setView(t.id)} style={{
             padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",
             fontSize:13,fontWeight:500,fontFamily:"'Outfit',sans-serif",
@@ -708,6 +741,48 @@ function EmployeeView({ employee, onLogout }) {
             ))}
           </div>
         )}
+
+        {view === "advance" && (
+          <div className="fade-up">
+            {/* Apply advance form */}
+            <div className="card-glow" style={{marginBottom:16}}>
+              <h3 style={{fontSize:17,color:"var(--gold)",marginBottom:16}}>Request Salary Advance</h3>
+              <div style={{marginBottom:12}}>
+                <label className="field-label">Amount (₹)</label>
+                <input type="number" className="input" placeholder="e.g. 2000" value={advanceForm.amount}
+                  onChange={e => setAdvanceForm(p=>({...p,amount:e.target.value}))}/>
+              </div>
+              <div style={{marginBottom:14}}>
+                <label className="field-label">Reason</label>
+                <textarea className="input" rows={2} placeholder="Brief reason for advance..."
+                  value={advanceForm.reason}
+                  onChange={e => setAdvanceForm(p=>({...p,reason:e.target.value}))}
+                  style={{resize:"vertical",minHeight:50}}/>
+              </div>
+              {advanceErr && <p style={{color:"var(--danger)",fontSize:13,marginBottom:10,padding:"8px 12px",background:"var(--danger-bg)",borderRadius:7}}>{advanceErr}</p>}
+              {advanceSent && <p style={{color:"var(--success)",fontSize:13,marginBottom:10,padding:"8px 12px",background:"var(--success-bg)",borderRadius:7}}>✓ Advance request submitted successfully.</p>}
+              <button className="btn btn-gold" style={{width:"100%"}} onClick={submitAdvance}>Submit Request</button>
+            </div>
+
+            {/* Advance history */}
+            <h3 style={{fontSize:16,marginBottom:12,color:"var(--text-2)"}}>My Advance Requests</h3>
+            {advances.length === 0 && (
+              <div className="card" style={{textAlign:"center",padding:"28px 20px",color:"var(--muted)",fontSize:13}}>No advance requests yet.</div>
+            )}
+            {[...advances].reverse().map(a => (
+              <div key={a.id} className="card" style={{marginBottom:10}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+                  <div>
+                    <p style={{fontWeight:700,fontSize:18,color:"var(--gold)",fontFamily:"'Playfair Display',serif"}}>₹{a.amount}</p>
+                    <p style={{fontSize:12,color:"var(--muted)",marginTop:2}}>{a.reason}</p>
+                  </div>
+                  <span className={`tag ${advanceStatusColor(a.status)}`} style={{textTransform:"capitalize"}}>{a.status}</span>
+                </div>
+                <p style={{fontSize:11,color:"var(--muted)"}}>Requested {fmtDate(a.appliedAt)}</p>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -720,6 +795,7 @@ function OwnerDashboard({ onLogout }) {
   const [employees, setEmployees] = useState([]);
   const [logs, setLogs] = useState([]);
   const [leaves, setLeaves] = useState([]);
+  const [advances, setAdvances] = useState([]);
   const [loading, setLoading] = useState(true);
   const [now, setNow] = useState(new Date());
   const [newPass, setNewPass] = useState("");
@@ -739,15 +815,16 @@ function OwnerDashboard({ onLogout }) {
   }, []);
 
   const load = useCallback(async () => {
-    const [emps, tlogs, lvs, st] = await Promise.all([
+    const [emps, tlogs, lvs, advs, st] = await Promise.all([
       storage.get("employees").then(d => d || SEED_EMPLOYEES),
       storage.get("timelogs").then(d => d || []),
       storage.get("leaves").then(d => d || []),
+      storage.get("advances").then(d => d || []),
       storage.get("appSettings").then(d => d || { leavesEnabled: true }),
     ]);
     if (!st.branches) st.branches = ["Mens", "Womens", "Crazo", "Warehouse"];
     await storage.set("employees", emps);
-    setEmployees(emps); setLogs(tlogs); setLeaves(lvs); setSettings(st);
+    setEmployees(emps); setLogs(tlogs); setLeaves(lvs); setAdvances(advs); setSettings(st);
     setLoading(false);
   }, []);
 
@@ -806,11 +883,21 @@ function OwnerDashboard({ onLogout }) {
   const fEmpIds = new Set(fEmployees.map(e => e.id));
   const fLogs = logs.filter(l => fEmpIds.has(l.employeeId));
   const fLeaves = leaves.filter(l => fEmpIds.has(l.employeeId));
+  const fAdvances = advances.filter(a => fEmpIds.has(a.employeeId));
+
+  const getPrAdvances = (empId) => fAdvances.filter(a => {
+    const d = new Date(a.appliedAt);
+    return a.employeeId === empId && a.status === "paid" && d >= prStart && d < prEnd;
+  });
 
   const activeSessions = fLogs.filter(l => !l.clockOut);
   const pendingLeaves = fLeaves.filter(l => l.status === "pending");
   const approvedLeaves = fLeaves.filter(l => l.status === "approved");
   const rejectedLeaves = fLeaves.filter(l => l.status === "rejected");
+  
+  const pendingAdvances = fAdvances.filter(a => a.status === "pending");
+  const paidAdvances = fAdvances.filter(a => a.status === "paid");
+  const rejectedAdvances = fAdvances.filter(a => a.status === "rejected");
 
   const deleteLog = async (id) => {
     const n = logs.filter(l => l.id !== id);
@@ -825,6 +912,16 @@ function OwnerDashboard({ onLogout }) {
   const rejectLeave = async (id) => {
     const n = leaves.map(l => l.id === id ? {...l, status:"rejected"} : l);
     await storage.set("leaves", n); setLeaves(n);
+  };
+
+  const markAdvancePaid = async (id) => {
+    const n = advances.map(a => a.id === id ? {...a, status:"paid"} : a);
+    await storage.set("advances", n); setAdvances(n);
+  };
+
+  const rejectAdvance = async (id) => {
+    const n = advances.map(a => a.id === id ? {...a, status:"rejected"} : a);
+    await storage.set("advances", n); setAdvances(n);
   };
 
   const updateSettings = async (newSt) => {
@@ -875,13 +972,15 @@ function OwnerDashboard({ onLogout }) {
   };
 
   const exportPayrollCSV = () => {
-    const rows = [["Employee", "Branch", "Payment Cycle", "Days Worked", "Total Hours", "Daily Salary", "Hourly Rate", "Total Pay"]];
+    const rows = [["Employee", "Branch", "Payment Cycle", "Days Worked", "Total Hours", "Daily Salary", "Hourly Rate", "Gross Pay", "Advances Paid", "Net Pay"]];
     fEmployees.forEach(emp => {
       const wl = getPrLogs(emp.id).filter(l=>l.clockOut);
       const wh = totalHours(wl);
       const daysWorked = new Set(wl.map(l => new Date(l.clockIn).toDateString())).size;
-      const pay = (daysWorked * (emp.dailySalary || 0)) + (wh * (emp.hourlyRate || 0));
-      rows.push([emp.name, emp.branch || "—", emp.paymentCycle || "Weekly", daysWorked, wh.toFixed(2), `₹${emp.dailySalary||0}`, `₹${emp.hourlyRate||0}`, `₹${pay.toFixed(2)}`]);
+      const gross = (daysWorked * (emp.dailySalary || 0)) + (wh * (emp.hourlyRate || 0));
+      const advance = getPrAdvances(emp.id).reduce((sum, a) => sum + a.amount, 0);
+      const net = gross - advance;
+      rows.push([emp.name, emp.branch || "—", emp.paymentCycle || "Weekly", daysWorked, wh.toFixed(2), `₹${emp.dailySalary||0}`, `₹${emp.hourlyRate||0}`, `₹${gross.toFixed(2)}`, `₹${advance.toFixed(2)}`, `₹${net.toFixed(2)}`]);
     });
     const csv = rows.map(r => r.join(",")).join("\n");
     const a = document.createElement("a");
@@ -892,7 +991,9 @@ function OwnerDashboard({ onLogout }) {
   const totalPrPay = fEmployees.reduce((s,emp) => {
     const wl = getPrLogs(emp.id).filter(l=>l.clockOut);
     const days = new Set(wl.map(l=>new Date(l.clockIn).toDateString())).size;
-    return s + (days*(emp.dailySalary||0)) + (totalHours(wl)*(emp.hourlyRate||0));
+    const gross = (days*(emp.dailySalary||0)) + (totalHours(wl)*(emp.hourlyRate||0));
+    const advance = getPrAdvances(emp.id).reduce((sum, a) => sum + a.amount, 0);
+    return s + (gross - advance);
   }, 0);
   const totalPrHrs = fEmployees.reduce((s,emp) => s + totalHours(getPrLogs(emp.id).filter(l=>l.clockOut)), 0);
 
@@ -902,6 +1003,7 @@ function OwnerDashboard({ onLogout }) {
     {id:"timesheet", label:"Timesheets",  icon:"📋"},
     {id:"payroll",   label:"Payroll",     icon:"₹"},
     {id:"leaves",    label:"Leaves",      icon:"📅", badge: pendingLeaves.length},
+    {id:"advances",  label:"Advances",    icon:"💸", badge: pendingAdvances.length},
     {id:"employees", label:"Staff",       icon:"👥"},
     {id:"settings",  label:"Settings",    icon:"⚙️"},
   ];
@@ -1006,6 +1108,7 @@ function OwnerDashboard({ onLogout }) {
                 {label:"Total Staff", value:fEmployees.length, icon:"👥", color:"var(--accent)"},
                 {label:"Active Now",  value:activeSessions.length, icon:"⏱", color:"var(--success)"},
                 {label:"Pending Leaves", value:pendingLeaves.length, icon:"📅", color:"var(--amber)"},
+                {label:"Advances Req.", value:pendingAdvances.length, icon:"💸", color:"var(--amber)"},
               ].map(s => (
                 <div key={s.label} className="card" style={{position:"relative",overflow:"hidden"}}>
                   <div style={{fontSize:20,marginBottom:8,opacity:.7}}>{s.icon}</div>
@@ -1258,7 +1361,9 @@ function OwnerDashboard({ onLogout }) {
                 const wl = getPrLogs(emp.id).filter(l=>l.clockOut);
                 const wh = totalHours(wl);
                 const daysWorked = new Set(wl.map(l => new Date(l.clockIn).toDateString())).size;
-                const pay = (daysWorked * (emp.dailySalary || 0)) + (wh * (emp.hourlyRate || 0));
+                const gross = (daysWorked * (emp.dailySalary || 0)) + (wh * (emp.hourlyRate || 0));
+                const advance = getPrAdvances(emp.id).reduce((sum, a) => sum + a.amount, 0);
+                const net = gross - advance;
                 return (
                   <div key={emp.id} className="card" style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
                     <div style={{textAlign:"left"}}>
@@ -1266,8 +1371,9 @@ function OwnerDashboard({ onLogout }) {
                       <div style={{fontSize:12,color:"var(--muted)"}}>{emp.branch ? `${emp.branch} · ` : ""}{emp.paymentCycle || "Weekly"} · {daysWorked} days · {wh.toFixed(2)} hrs · ₹{emp.dailySalary||0}/day + ₹{emp.hourlyRate||0}/hr</div>
                     </div>
                     <div style={{textAlign:"right"}}>
-                      <div style={{fontSize:26,fontFamily:"'Playfair Display',serif",color:"var(--gold)",fontWeight:700}}>₹{pay.toFixed(2)}</div>
-                      {wh === 0 && <span style={{fontSize:12,color:"var(--muted)"}}>No shifts</span>}
+                      <div style={{fontSize:26,fontFamily:"'Playfair Display',serif",color:"var(--gold)",fontWeight:700}}>₹{net.toFixed(2)}</div>
+                      {advance > 0 && <div style={{fontSize:12,color:"var(--danger)",fontWeight:500}}>Advances Paid: -₹{advance.toFixed(2)}</div>}
+                      {wh === 0 && advance === 0 && <span style={{fontSize:12,color:"var(--muted)"}}>No shifts</span>}
                     </div>
                   </div>
                 );
@@ -1276,7 +1382,7 @@ function OwnerDashboard({ onLogout }) {
 
             <div className="card-glow" style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <div>
-                <p style={{color:"var(--muted)",fontSize:13}}>Total {prMode==="weekly"?"Weekly":"Monthly"} Payroll</p>
+                <p style={{color:"var(--muted)",fontSize:13}}>Total Net {prMode==="weekly"?"Weekly":"Monthly"} Payroll</p>
                 <p style={{color:"var(--muted)",fontSize:12}}>{totalPrHrs.toFixed(2)} hrs · {fEmployees.length} staff</p>
               </div>
               <div style={{fontSize:36,fontFamily:"'Playfair Display',serif",color:"var(--gold)",fontWeight:700}}>₹{totalPrPay.toFixed(2)}</div>
@@ -1374,6 +1480,75 @@ function OwnerDashboard({ onLogout }) {
 
             {pendingLeaves.length === 0 && approvedLeaves.length === 0 && rejectedLeaves.length === 0 && (
               <div className="card" style={{textAlign:"center",padding:"32px",color:"var(--muted)",fontSize:13}}>No leave requests yet.</div>
+            )}
+          </div>
+        )}
+
+        {/* ── ADVANCES ── */}
+        {tab === "advances" && (
+          <div className="fade-up">
+            <h3 style={{fontSize:20,marginBottom:20}}>Salary Advances</h3>
+
+            {/* Pending */}
+            {pendingAdvances.length > 0 && (
+              <div style={{marginBottom:28}}>
+                <p style={{fontSize:12,color:"var(--amber)",textTransform:"uppercase",letterSpacing:".1em",fontWeight:500,marginBottom:12}}>
+                  ⚑ Pending Advance Requests ({pendingAdvances.length})
+                </p>
+                {pendingAdvances.map(a => (
+                  <div key={a.id} style={{
+                    background:"var(--card)",border:"1px solid rgba(245,158,11,.25)",borderRadius:16,
+                    padding:"16px 20px",marginBottom:10,
+                    boxShadow:"0 0 20px rgba(245,158,11,.06)", display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:16
+                  }}>
+                    <div>
+                      <p style={{fontWeight:600,fontSize:15}}>{a.name}</p>
+                      <p style={{fontSize:20,color:"var(--gold)",marginTop:2, fontFamily:"'Playfair Display',serif", fontWeight:700}}>₹{a.amount}</p>
+                      <p style={{fontSize:12,color:"var(--muted)",marginTop:4}}>{a.reason}</p>
+                      <p style={{fontSize:11,color:"var(--text-2)",marginTop:4}}>Requested {fmtDate(a.appliedAt)}</p>
+                    </div>
+                    <div style={{display:"flex",gap:8,flexDirection:"column"}}>
+                      <button className="btn btn-success btn-sm" onClick={() => markAdvancePaid(a.id)}>✓ Mark Paid</button>
+                      <button className="btn btn-danger btn-sm" onClick={() => rejectAdvance(a.id)}>✕ Reject</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Paid */}
+            {paidAdvances.length > 0 && (
+              <div style={{marginBottom:28}}>
+                <p style={{fontSize:12,color:"var(--success)",textTransform:"uppercase",letterSpacing:".1em",fontWeight:500,marginBottom:12}}>✓ Paid Advances ({paidAdvances.length})</p>
+                {[...paidAdvances].reverse().map(a => (
+                  <div key={a.id} className="card" style={{marginBottom:10,display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:10}}>
+                    <div>
+                      <p style={{fontWeight:600,fontSize:14}}>{a.name} <span style={{color:"var(--muted)",fontWeight:400}}>· ₹{a.amount}</span></p>
+                      <p style={{fontSize:12,color:"var(--muted)"}}>{fmtDate(a.appliedAt)} · {a.reason}</p>
+                    </div>
+                    <span className="tag tag-green">Paid</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Rejected */}
+            {rejectedAdvances.length > 0 && (
+              <div style={{marginBottom:28}}>
+                <p style={{fontSize:12,color:"var(--danger)",textTransform:"uppercase",letterSpacing:".1em",fontWeight:500,marginBottom:12}}>✕ Rejected Advances ({rejectedAdvances.length})</p>
+                {[...rejectedAdvances].reverse().map(a => (
+                  <div key={a.id} className="card" style={{marginBottom:10,display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:10}}>
+                    <div>
+                      <p style={{fontWeight:600,fontSize:14}}>{a.name} <span style={{color:"var(--muted)",fontWeight:400}}>· ₹{a.amount}</span></p>
+                      <p style={{fontSize:12,color:"var(--muted)"}}>{fmtDate(a.appliedAt)} · {a.reason}</p>
+                    </div>
+                    <span className="tag tag-red">Rejected</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {pendingAdvances.length === 0 && paidAdvances.length === 0 && rejectedAdvances.length === 0 && (
+              <div className="card" style={{textAlign:"center",padding:"32px",color:"var(--muted)",fontSize:13}}>No advance requests yet.</div>
             )}
           </div>
         )}
@@ -1521,6 +1696,8 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
     await storage.set("timelogs", allLogs.filter(l => l.employeeId !== id));
     const allLeaves = await storage.get("leaves") || [];
     await storage.set("leaves", allLeaves.filter(l => l.employeeId !== id));
+    const allAdvances = await storage.get("advances") || [];
+    await storage.set("advances", allAdvances.filter(a => a.employeeId !== id));
   };
 
   const edit = (emp) => {
