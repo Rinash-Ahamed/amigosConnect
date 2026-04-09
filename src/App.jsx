@@ -1625,4 +1625,3 @@ export default function App() {
       ? <EmployeeView employee={session.employee} onLogout={() => setSession(null)} />
       : <OwnerDashboard onLogout={() => setSession(null)} />;
 }
-
