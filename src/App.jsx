@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { initializeApp } from "firebase/app";
 import { getFirestore, doc, getDoc, setDoc } from "firebase/firestore";
+import { BarChart, Bar, XAxis, Tooltip, ResponsiveContainer } from "recharts";
 
 // ── Firebase Configuration ───────────────────────────────────────────────────
 const firebaseConfig = {
@@ -316,6 +317,18 @@ function LoginScreen({ onLogin }) {
   const [employees, setEmployees] = useState([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [installPrompt, setInstallPrompt] = useState(null);
+
+  useEffect(() => {
+    const handleInstallPrompt = (e) => {
+      // Prevent Chrome 67 and earlier from automatically showing the prompt
+      e.preventDefault();
+      // Stash the event so it can be triggered later.
+      setInstallPrompt(e);
+    };
+    window.addEventListener('beforeinstallprompt', handleInstallPrompt);
+    return () => window.removeEventListener('beforeinstallprompt', handleInstallPrompt);
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -334,6 +347,13 @@ function LoginScreen({ onLogin }) {
   }, [employees, onLogin]);
 
   useEffect(() => { if (pin.length === 4) tryEmployeePin(pin); }, [pin, tryEmployeePin]);
+
+  const handleInstall = async () => {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    const { outcome } = await installPrompt.userChoice;
+    if (outcome === 'accepted') setInstallPrompt(null);
+  };
 
   if (loading) return (
     <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:"var(--bg)"}}>
@@ -419,6 +439,15 @@ function LoginScreen({ onLogin }) {
             Login as Owner/Manager
           </button>
           <button className="btn btn-ghost btn-sm" style={{width:"100%"}} onClick={() => { setMode(null); setPass(""); setError(""); }}>← Back</button>
+        </div>
+      )}
+
+      {/* Manual Install Button */}
+      {installPrompt && !mode && (
+        <div className="fade-up" style={{position:"absolute", bottom: 30}}>
+          <button className="btn btn-outline btn-sm" style={{background:"var(--card)", color:"var(--gold)", border:"1px solid var(--gold-dim)"}} onClick={handleInstall}>
+            ⬇️ Install Amigos App
+          </button>
         </div>
       )}
     </div>
@@ -545,9 +574,23 @@ function EmployeeView({ employee, onLogout }) {
   });
 
   const hrs = totalHours(weekLogs.filter(l => l.clockOut));
-  const daysWorked = new Set(weekLogs.filter(l => l.clockOut).map(l => new Date(l.clockIn).toDateString())).size;
-  const weekEarnings = (daysWorked * (employee.dailySalary || 0)) + (hrs * (employee.hourlyRate || 0));
   const elapsed = active ? Math.floor((now - new Date(active.clockIn)) / 1000) : 0;
+
+  const logsByDay = {};
+  weekLogs.filter(l => l.clockOut).forEach(l => {
+    const d = new Date(l.clockIn).toDateString();
+    if (!logsByDay[d]) {
+      logsByDay[d] = { hours: 0, ts: new Date(l.clockIn).getTime(), label: new Date(l.clockIn).toLocaleDateString("en-US", { weekday: 'short' }) };
+    }
+    logsByDay[d].hours += hoursWorked(l.clockIn, l.clockOut);
+  });
+
+  const dayEarningsData = Object.values(logsByDay)
+    .sort((a, b) => a.ts - b.ts)
+    .map(item => {
+      const hourlyRate = employee.hourlyRate || 0;
+      return { name: item.label, Earnings: Math.round(item.hours * hourlyRate) };
+    });
   const elapsedStr = `${String(Math.floor(elapsed/3600)).padStart(2,"0")}:${String(Math.floor((elapsed%3600)/60)).padStart(2,"0")}:${String(elapsed%60).padStart(2,"0")}`;
 
   const leaveTypeColor = (t) => ({Casual:"tag-blue", Sick:"tag-red", Emergency:"tag-amber"}[t] || "tag-muted");
@@ -637,18 +680,29 @@ function EmployeeView({ employee, onLogout }) {
             </div>
 
             {/* Stats row */}
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:18}}>
-              <div className="card" style={{textAlign:"center"}}>
-                <div style={{fontSize:26,marginBottom:4}}>📅</div>
-                <div style={{fontSize:22,fontWeight:600,color:"var(--gold)",fontFamily:"'Playfair Display',serif"}}>{hrs.toFixed(1)} hrs</div>
-                <div style={{fontSize:12,color:"var(--muted)"}}>This Week</div>
-              </div>
-              <div className="card" style={{textAlign:"center"}}>
-                <div style={{fontSize:26,marginBottom:4}}>💰</div>
-                <div style={{fontSize:22,fontWeight:600,color:"var(--gold)",fontFamily:"'Playfair Display',serif"}}>₹{weekEarnings.toFixed(0)}</div>
-                <div style={{fontSize:12,color:"var(--muted)"}}>Week Earnings</div>
+            <div className="card" style={{display:"flex",alignItems:"center",gap:16,marginBottom:18}}>
+              <div style={{fontSize:36}}>📅</div>
+              <div>
+                <div style={{fontSize:26,fontWeight:700,color:"var(--gold)",fontFamily:"'Playfair Display',serif"}}>{hrs.toFixed(1)} hrs</div>
+                <div style={{fontSize:13,color:"var(--muted)",fontWeight:500}}>Worked This Week</div>
               </div>
             </div>
+
+            {/* Daily Earnings Bar Chart */}
+            {dayEarningsData.length > 0 && (
+              <div className="card-glow" style={{marginBottom: 18}}>
+                <h3 style={{fontSize:16, marginBottom:18, color:"var(--gold)"}}>Daily Earnings</h3>
+                <div style={{height: 180, width: "100%", marginLeft: -10}}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={dayEarningsData}>
+                      <XAxis dataKey="name" stroke="var(--muted)" fontSize={12} tickLine={false} axisLine={false} />
+                      <Tooltip cursor={{fill: 'var(--border-2)'}} contentStyle={{background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text)'}} itemStyle={{color: 'var(--gold)', fontWeight: 600}} />
+                      <Bar dataKey="Earnings" fill="var(--gold)" radius={[6,6,6,6]} barSize={30} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            )}
 
             {/* Recent shifts */}
             <div className="card">
@@ -957,6 +1011,42 @@ function OwnerDashboard({ onLogout }) {
     if (selectedBranch === branchName) setSelectedBranch("All");
   };
 
+  const calculatePayrollDetails = (logs, employee) => {
+    const details = {
+      totalHours: 0,
+      regularHours: 0,
+      overtimeHours: 0,
+      grossPay: 0,
+      daysWorked: 0,
+    };
+
+    if (!employee || !logs || logs.length === 0) return details;
+
+    const dailyHours = {};
+    const workedDays = new Set();
+    logs.forEach(log => {
+      if (!log.clockOut) return;
+      const date = new Date(log.clockIn).toDateString();
+      workedDays.add(date);
+      if (!dailyHours[date]) { dailyHours[date] = 0; }
+      dailyHours[date] += hoursWorked(log.clockIn, log.clockOut);
+    });
+
+    details.daysWorked = workedDays.size;
+
+    const standardHours = employee.standardHours || 10;
+    const hourlyRate = employee.hourlyRate || 0;
+
+    for (const date in dailyHours) {
+      const hours = dailyHours[date];
+      details.totalHours += hours;
+      if (hours > standardHours) { details.regularHours += standardHours; details.overtimeHours += hours - standardHours; } 
+      else { details.regularHours += hours; }
+    }
+    details.grossPay = details.totalHours * hourlyRate;
+    return details;
+  };
+
   const exportTimesheetsCSV = () => {
     const rows = [["Employee","Branch","Date","Clock In","Clock Out","Hours"]];
     fEmployees.forEach(emp => {
@@ -971,27 +1061,42 @@ function OwnerDashboard({ onLogout }) {
     a.download = `timesheets-${tsMode}.csv`; a.click();
   };
 
-  const exportPayrollCSV = () => {
-    const rows = [["Employee", "Branch", "Payment Cycle", "Days Worked", "Total Hours", "Daily Salary", "Hourly Rate", "Gross Pay", "Advances Paid", "Net Pay"]];
-    fEmployees.forEach(emp => {
-      const wl = getPrLogs(emp.id).filter(l=>l.clockOut);
-      const wh = totalHours(wl);
-      const daysWorked = new Set(wl.map(l => new Date(l.clockIn).toDateString())).size;
-      const gross = (daysWorked * (emp.dailySalary || 0)) + (wh * (emp.hourlyRate || 0));
-      const advance = getPrAdvances(emp.id).reduce((sum, a) => sum + a.amount, 0);
-      const net = gross - advance;
-      rows.push([emp.name, emp.branch || "—", emp.paymentCycle || "Weekly", daysWorked, wh.toFixed(2), `₹${emp.dailySalary||0}`, `₹${emp.hourlyRate||0}`, `₹${gross.toFixed(2)}`, `₹${advance.toFixed(2)}`, `₹${net.toFixed(2)}`]);
-    });
-    const csv = rows.map(r => r.join(",")).join("\n");
-    const a = document.createElement("a");
-    a.href = "data:text/csv;charset=utf-8," + encodeURIComponent(csv);
-    a.download = `payroll-${prMode}.csv`; a.click();
-  };
+ const exportPayrollCSV = () => {
+  // 11 Columns defined here
+  const rows = [["Employee", "Branch", "Payment Cycle", "Days Worked", "Regular Hours", "Overtime Hours", "Total Hours", "Hourly Rate", "Gross Pay", "Advances Paid", "Net Pay"]];
+  
+  fEmployees.forEach(emp => {
+    const wl = getPrLogs(emp.id).filter(l => l.clockOut);
+    const payroll = calculatePayrollDetails(wl, emp);
+    const gross = payroll.grossPay;
+    const advance = getPrAdvances(emp.id).reduce((sum, a) => sum + a.amount, 0);
+    const net = gross - advance;
 
+    // Ensure this array has exactly 11 elements to match the header
+    rows.push([
+      emp.name, 
+      emp.branch || "—", 
+      emp.paymentCycle || "Weekly", 
+      payroll.daysWorked, 
+      payroll.regularHours.toFixed(2), 
+      payroll.overtimeHours.toFixed(2), 
+      payroll.totalHours.toFixed(2), 
+      emp.hourlyRate || 0, // Removed ₹ for better CSV compatibility
+      gross.toFixed(2), 
+      advance.toFixed(2), 
+      net.toFixed(2)
+    ]);
+  });
+
+  const csv = rows.map(r => r.join(",")).join("\n");
+  const a = document.createElement("a");
+  a.href = "data:text/csv;charset=utf-8," + encodeURIComponent(csv);
+  a.download = `payroll-${prMode}.csv`; 
+  a.click();
+};
   const totalPrPay = fEmployees.reduce((s,emp) => {
     const wl = getPrLogs(emp.id).filter(l=>l.clockOut);
-    const days = new Set(wl.map(l=>new Date(l.clockIn).toDateString())).size;
-    const gross = (days*(emp.dailySalary||0)) + (totalHours(wl)*(emp.hourlyRate||0));
+    const gross = calculatePayrollDetails(wl, emp).grossPay;
     const advance = getPrAdvances(emp.id).reduce((sum, a) => sum + a.amount, 0);
     return s + (gross - advance);
   }, 0);
@@ -1174,7 +1279,7 @@ function OwnerDashboard({ onLogout }) {
                       </div>
                       <div style={{textAlign: "left"}}>
                         <p style={{fontWeight:600,fontSize:14}}>{emp.name}</p>
-                        <p style={{fontSize:12,color:"var(--muted)"}}>{emp.role} {emp.branch ? `· ${emp.branch}` : ""} · ₹{emp.dailySalary||0}/day + ₹{emp.hourlyRate||0}/hr</p>
+                        <p style={{fontSize:12,color:"var(--muted)"}}>{emp.role} {emp.branch ? `· ${emp.branch}` : ""} · ₹{emp.dailySalary||0}/day (₹{emp.hourlyRate||0}/hr)</p>
                       </div>
                     </div>
                     <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
@@ -1304,7 +1409,7 @@ function OwnerDashboard({ onLogout }) {
               const wl = getTsLogs(emp.id);
               const wh = totalHours(wl.filter(l=>l.clockOut));
               const days = new Set(wl.filter(l=>l.clockOut).map(l=>new Date(l.clockIn).toDateString())).size;
-              const pay = (days * (emp.dailySalary||0)) + (wh * (emp.hourlyRate||0));
+              const pay = wh * (emp.hourlyRate||0);
               return (
                 <div key={emp.id} className="card" style={{marginBottom:14}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,flexWrap:"wrap",gap:8}}>
@@ -1359,16 +1464,15 @@ function OwnerDashboard({ onLogout }) {
             <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:20}}>
               {fEmployees.map(emp => {
                 const wl = getPrLogs(emp.id).filter(l=>l.clockOut);
-                const wh = totalHours(wl);
-                const daysWorked = new Set(wl.map(l => new Date(l.clockIn).toDateString())).size;
-                const gross = (daysWorked * (emp.dailySalary || 0)) + (wh * (emp.hourlyRate || 0));
+                const payroll = calculatePayrollDetails(wl, emp);
+                const gross = payroll.grossPay;
                 const advance = getPrAdvances(emp.id).reduce((sum, a) => sum + a.amount, 0);
                 const net = gross - advance;
                 return (
                   <div key={emp.id} className="card" style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
                     <div style={{textAlign:"left"}}>
                       <div style={{fontWeight:600,marginBottom:2}}>{emp.name}</div>
-                      <div style={{fontSize:12,color:"var(--muted)"}}>{emp.branch ? `${emp.branch} · ` : ""}{emp.paymentCycle || "Weekly"} · {daysWorked} days · {wh.toFixed(2)} hrs · ₹{emp.dailySalary||0}/day + ₹{emp.hourlyRate||0}/hr</div>
+                      <div style={{fontSize:12,color:"var(--muted)"}}>{emp.branch ? `${emp.branch} · ` : ""}{emp.paymentCycle || "Weekly"} · {payroll.daysWorked} days · {payroll.totalHours.toFixed(2)} hrs ({payroll.overtimeHours.toFixed(2)} OT) · ₹{emp.hourlyRate||0}/hr</div>
                     </div>
                     <div style={{textAlign:"right"}}>
                       <div style={{fontSize:26,fontFamily:"'Playfair Display',serif",color:"var(--gold)",fontWeight:700}}>₹{net.toFixed(2)}</div>
@@ -1663,7 +1767,7 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
-  const [form, setForm] = useState({name:"",pin:"",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly"});
+  const [form, setForm] = useState({name:"",pin:"",standardHours:"10",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly"});
   const [err, setErr] = useState("");
 
   const save = async () => {
@@ -1672,7 +1776,7 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
     if (employees.find(e=>e.pin===form.pin && e.id !== editingId)) { setErr("PIN already taken."); return; }
     
     let updated;
-    const baseEmp = { ...form, hourlyRate: parseFloat(form.hourlyRate)||0, dailySalary: parseFloat(form.dailySalary)||0 };
+    const baseEmp = { ...form, hourlyRate: parseFloat(form.hourlyRate)||0, dailySalary: parseFloat(form.dailySalary)||0, standardHours: parseFloat(form.standardHours)||10 };
     if (editingId) {
       updated = employees.map(e => e.id === editingId ? { ...e, ...baseEmp } : e);
     } else {
@@ -1681,7 +1785,7 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
     }
     await storage.set("employees", updated);
     setEmployees(updated);
-    setForm({name:"",pin:"",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly"});
+    setForm({name:"",pin:"",standardHours:"10",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly"});
     setAdding(false); setEditingId(null); setErr("");
   };
 
@@ -1703,7 +1807,7 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
   const edit = (emp) => {
     setForm({
       name: emp.name, pin: emp.pin, hourlyRate: emp.hourlyRate || "", 
-      dailySalary: emp.dailySalary || "", role: emp.role, 
+      dailySalary: emp.dailySalary || "", standardHours: emp.standardHours || "10", role: emp.role, 
       branch: emp.branch || branches[0] || "",
       paymentCycle: emp.paymentCycle || "Weekly"
     });
@@ -1721,7 +1825,7 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
     <div className="fade-up">
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
         <h3 style={{fontSize:20}}>Staff Members ({fEmployees.length})</h3>
-        <button className="btn btn-gold btn-sm" onClick={() => { setAdding(p=>!p); if(adding) { setEditingId(null); setForm({name:"",pin:"",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly"}); }}}>
+        <button className="btn btn-gold btn-sm" onClick={() => { setAdding(p=>!p); if(adding) { setEditingId(null); setForm({name:"",pin:"",standardHours:"10",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly"}); }}}>
           {adding ? "✕ Cancel" : "+ Add Staff"}
         </button>
       </div>
@@ -1736,6 +1840,7 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
           {[
             {label:"Full Name",     key:"name",       type:"text",   ph:"e.g. Jane Smith"},
             {label:"4-Digit PIN",   key:"pin",        type:"text",   ph:"e.g. 5678"},
+            {label:"Standard Hrs/Day", key:"standardHours", type:"number", ph:"e.g. 10"},
             {label:"Per Day Salary (₹)", key:"dailySalary", type:"number", ph:"e.g. 500"},
             {label:"Hourly Rate (₹)", key:"hourlyRate",type:"number", ph:"e.g. 11.50"},
             {label:"Role",          key:"role",       type:"text",   ph:"e.g. Sales Executive"},
@@ -1743,7 +1848,12 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
             <div key={f.key} style={{marginBottom:12}}>
               <label className="field-label">{f.label}</label>
               <input type={f.type} placeholder={f.ph} value={form[f.key]}
-                onChange={e => setForm(p=>({...p,[f.key]:e.target.value}))}
+                onChange={e => {
+                  const val = e.target.value;
+                  if (f.key === "dailySalary") setForm(p => ({...p, dailySalary: val, hourlyRate: val && p.standardHours ? (parseFloat(val)/parseFloat(p.standardHours)).toFixed(2) : p.hourlyRate}));
+                  else if (f.key === "standardHours") setForm(p => ({...p, standardHours: val, hourlyRate: val && p.dailySalary ? (parseFloat(p.dailySalary)/parseFloat(val)).toFixed(2) : p.hourlyRate}));
+                  else setForm(p => ({...p, [f.key]: val}));
+                }}
                 className="input"/>
             </div>
           ))}
@@ -1779,7 +1889,7 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
               }}>👤</div>
               <div>
                 <div style={{fontWeight:600}}>{emp.name}</div>
-                <div style={{fontSize:12,color:"var(--muted)"}}>{emp.role} {emp.branch ? `· ${emp.branch}` : ""} · {emp.paymentCycle || "Weekly"} · PIN: {emp.pin} · ₹{emp.dailySalary||0}/day + ₹{emp.hourlyRate||0}/hr</div>
+                <div style={{fontSize:12,color:"var(--muted)"}}>{emp.role} {emp.branch ? `· ${emp.branch}` : ""} · {emp.paymentCycle || "Weekly"} · PIN: {emp.pin} · ₹{emp.dailySalary||0}/day (₹{emp.hourlyRate||0}/hr)</div>
               </div>
             </div>
             <div style={{display:"flex", gap:8}}>
@@ -1795,10 +1905,27 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
 
 // ── Root ──────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [session, setSession] = useState(null);
+  const [session, setSession] = useState(() => {
+    try {
+      const saved = localStorage.getItem("amigos_session");
+      return saved ? JSON.parse(saved) : null;
+    } catch { return null; }
+  });
+
+  const handleLogin = (role, emp) => {
+    const s = { role, employee: emp };
+    setSession(s);
+    localStorage.setItem("amigos_session", JSON.stringify(s));
+  };
+
+  const handleLogout = () => {
+    setSession(null);
+    localStorage.removeItem("amigos_session");
+  };
+
   return !session
-    ? <LoginScreen onLogin={(role, emp) => setSession({role, employee: emp})} />
+    ? <LoginScreen onLogin={handleLogin} />
     : session.role === "employee"
-      ? <EmployeeView employee={session.employee} onLogout={() => setSession(null)} />
-      : <OwnerDashboard onLogout={() => setSession(null)} />;
+      ? <EmployeeView employee={session.employee} onLogout={handleLogout} />
+      : <OwnerDashboard onLogout={handleLogout} />;
 }
