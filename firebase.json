@@ -1,0 +1,8 @@
+{
+  "firestore": {
+    "database": "(default)",
+    "location": "asia-south1",
+    "rules": "delete after 3 months",
+    "indexes": "firestore.indexes.json"
+  }
+}
