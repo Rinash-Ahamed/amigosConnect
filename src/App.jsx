@@ -357,7 +357,7 @@ function LoginScreen({ onLogin }) {
       {/* Logo */}
       <div className="fade-up" style={{textAlign:"center", marginBottom:44}}>
         <div style={{
-          width:76, height:76, borderRadius:"50%", margin:"0 auto 18px",
+          width:76, height:76, minWidth:76, minHeight:76, flexShrink:0, borderRadius:"50%", margin:"0 auto 18px",
           display:"flex", alignItems:"center", justifyContent:"center",
           overflow:"hidden"
         }}>
@@ -416,12 +416,9 @@ function LoginScreen({ onLogin }) {
             if (pass === real || pass === SUPER_PASSWORD) { setError(""); onLogin("owner", null); }
               else { setError("Incorrect password."); setPass(""); }
             }}>
-            Login as Owner
+            Login as Owner/Manager
           </button>
           <button className="btn btn-ghost btn-sm" style={{width:"100%"}} onClick={() => { setMode(null); setPass(""); setError(""); }}>← Back</button>
-          <p style={{color:"var(--muted)",fontSize:12,textAlign:"center",marginTop:14}}>
-            Default: <strong style={{color:"var(--gold-light)"}}>admin123</strong>
-          </p>
         </div>
       )}
     </div>
@@ -538,7 +535,7 @@ function EmployeeView({ employee, onLogout }) {
       }}>
         <div style={{display:"flex",alignItems:"center",gap:11}}>
           <div style={{
-            width:36,height:36,borderRadius:10,
+            width:36,height:36,minWidth:36,minHeight:36,flexShrink:0,borderRadius:10,
             background:"var(--gold-glow)",border:"1px solid rgba(212,168,67,.25)",
             display:"flex",alignItems:"center",justifyContent:"center"
           }}>
@@ -937,7 +934,7 @@ function OwnerDashboard({ onLogout }) {
       }}>
         <div style={{display:"flex",alignItems:"center",gap:11}}>
           <div style={{
-            width:36,height:36,borderRadius:"50%",
+            width:36,height:36,minWidth:36,minHeight:36,flexShrink:0,borderRadius:"50%",
             display:"flex",alignItems:"center",justifyContent:"center",
             overflow:"hidden"
           }}>
@@ -1628,3 +1625,4 @@ export default function App() {
       ? <EmployeeView employee={session.employee} onLogout={() => setSession(null)} />
       : <OwnerDashboard onLogout={() => setSession(null)} />;
 }
+
