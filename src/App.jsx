@@ -17,6 +17,8 @@ const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
 // ── Storage helpers ──────────────────────────────────────────────────────────
+let cachedRetentionDays = 120;
+
 const storage = {
   async get(key) {
     try {
@@ -25,10 +27,14 @@ const storage = {
       if (docSnap.exists()) {
         let data = docSnap.data().value;
         
-        // Auto-Cleanup: Remove records older than 90 days on read
+        if (key === "appSettings" && data && data.retentionDays) {
+          cachedRetentionDays = data.retentionDays;
+        }
+        
+        // Auto-Cleanup
         if (Array.isArray(data) && (key === "timelogs" || key === "leaves" || key === "advances")) {
-          const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
-          data = data.filter(item => (item.clockIn || item.appliedAt || item.from) > ninetyDaysAgo);
+          const cutoffDate = new Date(Date.now() - cachedRetentionDays * 24 * 60 * 60 * 1000).toISOString();
+          data = data.filter(item => (item.clockIn || item.appliedAt || item.from) > cutoffDate);
         }
         
         return data;
@@ -43,10 +49,14 @@ const storage = {
     try {
       let dataToSave = val;
       
-      // Auto-Cleanup: Remove records older than 90 days on write
+      if (key === "appSettings" && val && val.retentionDays) {
+        cachedRetentionDays = val.retentionDays;
+      }
+      
+      // Auto-Cleanup
       if (Array.isArray(val) && (key === "timelogs" || key === "leaves" || key === "advances")) {
-        const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
-        dataToSave = val.filter(item => (item.clockIn || item.appliedAt || item.from) > ninetyDaysAgo);
+        const cutoffDate = new Date(Date.now() - cachedRetentionDays * 24 * 60 * 60 * 1000).toISOString();
+        dataToSave = val.filter(item => (item.clockIn || item.appliedAt || item.from) > cutoffDate);
       }
       
       const docRef = doc(db, "amigos_store", key);
@@ -83,7 +93,7 @@ const uid = () => Math.random().toString(36).slice(2, 10);
 // ── Global Styles ────────────────────────────────────────────────────────────
 const GlobalStyle = () => (
   <style>{`
-    @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700&family=Outfit:wght@300;400;500;600&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Playfair+Display:wght@400;500;600;700&display=swap');
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -116,7 +126,8 @@ const GlobalStyle = () => (
     body {
       background: var(--bg);
       color: var(--text);
-      font-family: 'Outfit', sans-serif;
+    font-family: 'Inter', sans-serif;
+    font-variant-numeric: tabular-nums;
       font-size: 15px;
       line-height: 1.6;
       -webkit-font-smoothing: antialiased;
@@ -129,7 +140,7 @@ const GlobalStyle = () => (
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 4px; }
 
-    input, select, textarea { font-family: 'Outfit', sans-serif; }
+    input, select, textarea { font-family: 'Inter', sans-serif; }
 
     @keyframes fadeUp {
       from { opacity: 0; transform: translateY(16px); }
@@ -165,7 +176,7 @@ const GlobalStyle = () => (
     .btn {
       display: inline-flex; align-items: center; justify-content: center; gap: 7px;
       padding: 11px 22px; border-radius: 10px; border: none; cursor: pointer;
-      font-family: 'Outfit', sans-serif; font-size: 14px; font-weight: 500;
+      font-family: 'Inter', sans-serif; font-size: 14px; font-weight: 500;
       transition: all .18s ease; white-space: nowrap; letter-spacing: .01em;
     }
     .btn-gold {
@@ -293,7 +304,7 @@ function PinPad({ value, onChange, maxLen = 4 }) {
               opacity: k==="" ? 0 : 1,
               pointerEvents: k==="" ? "none":"auto",
               borderRadius:11,
-              fontFamily:"'Outfit',sans-serif",
+              fontFamily:"'Inter',sans-serif",
               fontWeight: k==="⌫" ? 400 : 500,
             }}
             onClick={() => {
@@ -455,7 +466,7 @@ function LoginScreen({ onLogin }) {
 }
 
 // ── Employee View ─────────────────────────────────────────────────────────────
-function EmployeeView({ employee, onLogout }) {
+function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
   const [logs, setLogs] = useState([]);
   const [active, setActive] = useState(null);
   const [now, setNow] = useState(new Date());
@@ -469,6 +480,23 @@ function EmployeeView({ employee, onLogout }) {
   const [advanceForm, setAdvanceForm] = useState({ amount: "", reason: "" });
   const [advanceErr, setAdvanceErr] = useState("");
   const [advanceSent, setAdvanceSent] = useState(false);
+  const [profileForm, setProfileForm] = useState({
+    phone: employee.phone || "",
+    email: employee.email || "",
+    gender: employee.gender || "Select Gender",
+    address: employee.address || ""
+  });
+  const [profileSaved, setProfileSaved] = useState(false);
+
+  const saveProfile = async () => {
+    const allEmps = await (storage.get("employees")) || [];
+    const updatedEmp = { ...employee, ...profileForm };
+    const newEmps = allEmps.map(e => e.id === employee.id ? updatedEmp : e);
+    await storage.set("employees", newEmps);
+    if(onUpdateEmployee) onUpdateEmployee(updatedEmp);
+    setProfileSaved(true);
+    setTimeout(() => setProfileSaved(false), 3000);
+  };
 
   useEffect(() => {
     const iv = setInterval(() => setNow(new Date()), 1000);
@@ -617,7 +645,7 @@ function EmployeeView({ employee, onLogout }) {
           }}>
             <span style={{fontSize:16}}>👤</span>
           </div>
-          <div>
+          <div style={{textAlign: "left"}}>
             <p style={{fontSize:15,fontWeight:600,lineHeight:1.2}}>{employee.name}</p>
             <span className="tag tag-blue" style={{fontSize:11,padding:"1px 8px"}}>{employee.role} {employee.branch ? `· ${employee.branch}` : ""}</span>
           </div>
@@ -626,11 +654,11 @@ function EmployeeView({ employee, onLogout }) {
       </div>
 
       {/* Sub nav */}
-      <div style={{display:"flex",gap:4,padding:"14px 20px 0",borderBottom:"1px solid var(--border)"}}>
-        {[{id:"home",label:"Dashboard"}, ...(settings.leavesEnabled !== false ? [{id:"leave",label:"Leave Requests"}] : []), {id:"advance",label:"Advance"}].map(t => (
+      <div style={{display:"flex",gap:4,padding:"14px 20px 0",borderBottom:"1px solid var(--border)",overflowX:"auto",scrollbarWidth:"none"}}>
+        {[{id:"home",label:"Dashboard"}, ...(settings.leavesEnabled !== false ? [{id:"leave",label:"Leave Requests"}] : []), {id:"advance",label:"Advance"}, {id:"profile",label:"Profile"}].map(t => (
           <button key={t.id} onClick={() => setView(t.id)} style={{
             padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",
-            fontSize:13,fontWeight:500,fontFamily:"'Outfit',sans-serif",
+            fontSize:13,fontWeight:500,fontFamily:"'Inter',sans-serif",
             background: view===t.id ? "var(--gold)" : "transparent",
             color: view===t.id ? "#080b10" : "var(--muted)",
             transition:"all .18s"
@@ -796,6 +824,44 @@ function EmployeeView({ employee, onLogout }) {
           </div>
         )}
 
+        {view === "profile" && (
+          <div className="fade-up">
+            <div className="card-glow" style={{marginBottom:16, textAlign: "left"}}>
+              <h3 style={{fontSize:17,color:"var(--gold)",marginBottom:16}}>My Profile</h3>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+                <div>
+                  <label className="field-label">Phone Number</label>
+                  <input type="tel" className="input" placeholder="e.g. 9876543210" value={profileForm.phone}
+                    onChange={e => setProfileForm(p=>({...p,phone:e.target.value}))}/>
+                </div>
+                <div>
+                  <label className="field-label">Email</label>
+                  <input type="email" className="input" placeholder="e.g. me@example.com" value={profileForm.email}
+                    onChange={e => setProfileForm(p=>({...p,email:e.target.value}))}/>
+                </div>
+              </div>
+              <div style={{marginBottom:12}}>
+                <label className="field-label">Gender</label>
+                <select className="input" value={profileForm.gender} onChange={e => setProfileForm(p=>({...p,gender:e.target.value}))}>
+                  <option disabled>Select Gender</option>
+                  <option value="Male">Male</option>
+                  <option value="Female">Female</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+              <div style={{marginBottom:14}}>
+                <label className="field-label">Address</label>
+                <textarea className="input" rows={2} placeholder="Full address..."
+                  value={profileForm.address}
+                  onChange={e => setProfileForm(p=>({...p,address:e.target.value}))}
+                  style={{resize:"vertical",minHeight:60}}/>
+              </div>
+              {profileSaved && <p style={{color:"var(--success)",fontSize:13,marginBottom:10,padding:"8px 12px",background:"var(--success-bg)",borderRadius:7}}>✓ Profile updated successfully.</p>}
+              <button className="btn btn-gold" style={{width:"100%"}} onClick={saveProfile}>Save Profile</button>
+            </div>
+          </div>
+        )}
+
         {view === "advance" && (
           <div className="fade-up">
             {/* Apply advance form */}
@@ -862,6 +928,7 @@ function OwnerDashboard({ onLogout }) {
   const [prMode, setPrMode] = useState("weekly");
   const [prOffset, setPrOffset] = useState(0);
   const [overviewMode, setOverviewMode] = useState("weekly");
+  const [retentionDaysInput, setRetentionDaysInput] = useState("120");
 
   useEffect(() => {
     const iv = setInterval(() => setNow(new Date()), 1000);
@@ -879,6 +946,7 @@ function OwnerDashboard({ onLogout }) {
     if (!st.branches) st.branches = ["Mens", "Womens", "Crazo", "Warehouse"];
     await storage.set("employees", emps);
     setEmployees(emps); setLogs(tlogs); setLeaves(lvs); setAdvances(advs); setSettings(st);
+    setRetentionDaysInput((st.retentionDays || 120).toString());
     setLoading(false);
   }, []);
 
@@ -940,7 +1008,7 @@ function OwnerDashboard({ onLogout }) {
   const fAdvances = advances.filter(a => fEmpIds.has(a.employeeId));
 
   const getPrAdvances = (empId) => fAdvances.filter(a => {
-    const d = new Date(a.appliedAt);
+    const d = new Date(a.paidAt || a.appliedAt);
     return a.employeeId === empId && a.status === "paid" && d >= prStart && d < prEnd;
   });
 
@@ -969,7 +1037,7 @@ function OwnerDashboard({ onLogout }) {
   };
 
   const markAdvancePaid = async (id) => {
-    const n = advances.map(a => a.id === id ? {...a, status:"paid"} : a);
+    const n = advances.map(a => a.id === id ? {...a, status:"paid", paidAt: new Date().toISOString()} : a);
     await storage.set("advances", n); setAdvances(n);
   };
 
@@ -1058,14 +1126,17 @@ function OwnerDashboard({ onLogout }) {
     const csv = rows.map(r => r.join(",")).join("\n");
     const a = document.createElement("a");
     a.href = "data:text/csv;charset=utf-8," + encodeURIComponent(csv);
-    a.download = `timesheets-${tsMode}.csv`; a.click();
+    const timestamp = new Date().toISOString().slice(0,19).replace(/:/g, "-");
+    a.download = `timesheets-${tsMode}-${timestamp}.csv`; a.click();
   };
+
+  const prEmployees = fEmployees.filter(emp => (emp.paymentCycle || "Weekly").toLowerCase() === prMode);
 
  const exportPayrollCSV = () => {
   // 11 Columns defined here
   const rows = [["Employee", "Branch", "Payment Cycle", "Days Worked", "Regular Hours", "Overtime Hours", "Total Hours", "Hourly Rate", "Gross Pay", "Advances Paid", "Net Pay"]];
   
-  fEmployees.forEach(emp => {
+  prEmployees.forEach(emp => {
     const wl = getPrLogs(emp.id).filter(l => l.clockOut);
     const payroll = calculatePayrollDetails(wl, emp);
     const gross = payroll.grossPay;
@@ -1091,16 +1162,37 @@ function OwnerDashboard({ onLogout }) {
   const csv = rows.map(r => r.join(",")).join("\n");
   const a = document.createElement("a");
   a.href = "data:text/csv;charset=utf-8," + encodeURIComponent(csv);
-  a.download = `payroll-${prMode}.csv`; 
+  const timestamp = new Date().toISOString().slice(0,19).replace(/:/g, "-");
+  a.download = `payroll-${prMode}-${timestamp}.csv`; 
   a.click();
 };
-  const totalPrPay = fEmployees.reduce((s,emp) => {
-    const wl = getPrLogs(emp.id).filter(l=>l.clockOut);
-    const gross = calculatePayrollDetails(wl, emp).grossPay;
-    const advance = getPrAdvances(emp.id).reduce((sum, a) => sum + a.amount, 0);
-    return s + (gross - advance);
-  }, 0);
-  const totalPrHrs = fEmployees.reduce((s,emp) => s + totalHours(getPrLogs(emp.id).filter(l=>l.clockOut)), 0);
+
+  const exportAdvancesCSV = () => {
+    const rows = [["Employee", "Branch", "Amount", "Reason", "Status", "Applied Date", "Paid Date"]];
+    fAdvances.forEach(a => {
+      const emp = fEmployees.find(e => e.id === a.employeeId);
+      rows.push([
+        emp ? emp.name : "Unknown",
+        emp ? (emp.branch || "—") : "—",
+        a.amount,
+        `"${(a.reason || "").replace(/"/g, '""')}"`,
+        a.status,
+        fmtDate(a.appliedAt),
+        a.paidAt ? fmtDate(a.paidAt) : (a.status === 'paid' ? fmtDate(a.appliedAt) : "—")
+      ]);
+    });
+    const csv = rows.map(r => r.join(",")).join("\n");
+    const link = document.createElement("a");
+    link.href = "data:text/csv;charset=utf-8," + encodeURIComponent(csv);
+    const timestamp = new Date().toISOString().slice(0,19).replace(/:/g, "-");
+    link.download = `advances-${timestamp}.csv`; 
+    link.click();
+  };
+
+  const totalPrGross = prEmployees.reduce((s,emp) => s + calculatePayrollDetails(getPrLogs(emp.id).filter(l=>l.clockOut), emp).grossPay, 0);
+  const totalPrAdvance = prEmployees.reduce((s,emp) => s + getPrAdvances(emp.id).reduce((sum, a) => sum + a.amount, 0), 0);
+  const totalPrPay = totalPrGross - totalPrAdvance;
+  const totalPrHrs = prEmployees.reduce((s,emp) => s + totalHours(getPrLogs(emp.id).filter(l=>l.clockOut)), 0);
 
   const tabs = [
     {id:"overview",  label:"Overview",   icon:"◎"},
@@ -1124,7 +1216,7 @@ function OwnerDashboard({ onLogout }) {
     width:"100%",padding:"11px 14px",borderRadius:9,
     background:"var(--surface)",border:"1px solid var(--border-2)",
     color:"var(--text)",fontSize:14,outline:"none",marginBottom:10,
-    fontFamily:"'Outfit',sans-serif"
+    fontFamily:"'Inter',sans-serif"
   };
 
   return (
@@ -1181,7 +1273,7 @@ function OwnerDashboard({ onLogout }) {
         {tabs.map(t => (
           <button key={t.id} onClick={() => setTab(t.id)} style={{
             padding:"8px 14px",borderRadius:"8px 8px 0 0",border:"none",cursor:"pointer",
-            fontSize:13,fontFamily:"'Outfit',sans-serif",fontWeight:500,whiteSpace:"nowrap",
+            fontSize:13,fontFamily:"'Inter',sans-serif",fontWeight:500,whiteSpace:"nowrap",
             background: tab===t.id ? "var(--card)" : "transparent",
             color: tab===t.id ? "var(--gold)" : "var(--muted)",
             borderTop: tab===t.id ? "1px solid var(--gold-dim)" : "1px solid transparent",
@@ -1462,7 +1554,12 @@ function OwnerDashboard({ onLogout }) {
             </p>
 
             <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:20}}>
-              {fEmployees.map(emp => {
+              {prEmployees.length === 0 && (
+                <div className="card" style={{textAlign:"center",padding:"28px",color:"var(--muted)",fontSize:13}}>
+                  No staff members on a {prMode} payment cycle for this branch.
+                </div>
+              )}
+              {prEmployees.map(emp => {
                 const wl = getPrLogs(emp.id).filter(l=>l.clockOut);
                 const payroll = calculatePayrollDetails(wl, emp);
                 const gross = payroll.grossPay;
@@ -1475,21 +1572,25 @@ function OwnerDashboard({ onLogout }) {
                       <div style={{fontSize:12,color:"var(--muted)"}}>{emp.branch ? `${emp.branch} · ` : ""}{emp.paymentCycle || "Weekly"} · {payroll.daysWorked} days · {payroll.totalHours.toFixed(2)} hrs ({payroll.overtimeHours.toFixed(2)} OT) · ₹{emp.hourlyRate||0}/hr</div>
                     </div>
                     <div style={{textAlign:"right"}}>
+                      <div style={{fontSize:13,color:"var(--muted)",fontWeight:500,marginBottom:2}}>Gross: ₹{gross.toFixed(2)}</div>
                       <div style={{fontSize:26,fontFamily:"'Playfair Display',serif",color:"var(--gold)",fontWeight:700}}>₹{net.toFixed(2)}</div>
-                      {advance > 0 && <div style={{fontSize:12,color:"var(--danger)",fontWeight:500}}>Advances Paid: -₹{advance.toFixed(2)}</div>}
-                      {wh === 0 && advance === 0 && <span style={{fontSize:12,color:"var(--muted)"}}>No shifts</span>}
+                      {advance > 0 && <div style={{fontSize:12,color:"var(--danger)",fontWeight:500}}>Advances: -₹{advance.toFixed(2)}</div>}
+                      {payroll.totalHours === 0 && advance === 0 && <span style={{fontSize:12,color:"var(--muted)"}}>No shifts</span>}
                     </div>
                   </div>
                 );
               })}
             </div>
 
-            <div className="card-glow" style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div className="card-glow" style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:16}}>
               <div>
                 <p style={{color:"var(--muted)",fontSize:13}}>Total Net {prMode==="weekly"?"Weekly":"Monthly"} Payroll</p>
-                <p style={{color:"var(--muted)",fontSize:12}}>{totalPrHrs.toFixed(2)} hrs · {fEmployees.length} staff</p>
+                <p style={{color:"var(--muted)",fontSize:12}}>{totalPrHrs.toFixed(2)} hrs · {prEmployees.length} staff</p>
               </div>
-              <div style={{fontSize:36,fontFamily:"'Playfair Display',serif",color:"var(--gold)",fontWeight:700}}>₹{totalPrPay.toFixed(2)}</div>
+              <div style={{textAlign:"right"}}>
+                <div style={{fontSize:14,color:"var(--muted)",fontWeight:500,marginBottom:4}}>Gross: ₹{totalPrGross.toFixed(2)} {totalPrAdvance > 0 && <span style={{color:"var(--danger)"}}>| Adv: -₹{totalPrAdvance.toFixed(2)}</span>}</div>
+                <div style={{fontSize:36,fontFamily:"'Playfair Display',serif",color:"var(--gold)",fontWeight:700,lineHeight:1}}>₹{totalPrPay.toFixed(2)}</div>
+              </div>
             </div>
             <button className="btn btn-gold" style={{width:"100%",marginTop:16,padding:14}} onClick={exportPayrollCSV}>⬇ Export Payroll as CSV</button>
           </div>
@@ -1591,7 +1692,10 @@ function OwnerDashboard({ onLogout }) {
         {/* ── ADVANCES ── */}
         {tab === "advances" && (
           <div className="fade-up">
-            <h3 style={{fontSize:20,marginBottom:20}}>Salary Advances</h3>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+              <h3 style={{fontSize:20,marginBottom:0}}>Salary Advances</h3>
+              <button className="btn btn-gold btn-sm" onClick={exportAdvancesCSV}>⬇ Export CSV</button>
+            </div>
 
             {/* Pending */}
             {pendingAdvances.length > 0 && (
@@ -1628,7 +1732,7 @@ function OwnerDashboard({ onLogout }) {
                   <div key={a.id} className="card" style={{marginBottom:10,display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:10}}>
                     <div>
                       <p style={{fontWeight:600,fontSize:14}}>{a.name} <span style={{color:"var(--muted)",fontWeight:400}}>· ₹{a.amount}</span></p>
-                      <p style={{fontSize:12,color:"var(--muted)"}}>{fmtDate(a.appliedAt)} · {a.reason}</p>
+                      <p style={{fontSize:12,color:"var(--muted)"}}>Req: {fmtDate(a.appliedAt)}{a.paidAt ? ` · Paid: ${fmtDate(a.paidAt)}` : ""} · {a.reason}</p>
                     </div>
                     <span className="tag tag-green">Paid</span>
                   </div>
@@ -1728,6 +1832,36 @@ function OwnerDashboard({ onLogout }) {
               </button>
             </div>
 
+            <div className="card" style={{marginBottom: 20}}>
+              <h4 style={{fontSize:16, marginBottom:6}}>Data Retention (Auto-Cleanup)</h4>
+              <p style={{color:"var(--muted)", fontSize:13, marginBottom:16}}>
+                Automatically remove old records to save database space. 
+                <strong style={{color:"var(--text-2)"}}> Only Timesheets, Leaves, and Advances are removed. </strong> 
+                Employee profiles, staff lists, and app settings are never deleted.
+              </p>
+              
+              <label className="field-label">Retention Period (Days)</label>
+              <div style={{display:"flex", gap:8}}>
+                <input 
+                  type="number" 
+                  min="30"
+                  value={retentionDaysInput} 
+                  onChange={e => setRetentionDaysInput(e.target.value)} 
+                  className="input" 
+                  style={{marginBottom: 0}} 
+                />
+                <button 
+                  className="btn btn-gold" 
+                  onClick={() => {
+                    const days = parseInt(retentionDaysInput, 10);
+                    if (isNaN(days) || days < 1) { alert("Please enter a valid number of days."); return; }
+                    updateSettings({ retentionDays: days });
+                    alert(`Retention period updated to ${days} days.`);
+                  }}
+                >Save</button>
+              </div>
+            </div>
+
             <div className="card">
               <h4 style={{fontSize:16, marginBottom:6}}>Change Owner Password</h4>
               <p style={{color:"var(--muted)", fontSize:13, marginBottom:16}}>Update the master password used to access the Owner Dashboard.</p>
@@ -1767,7 +1901,7 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
-  const [form, setForm] = useState({name:"",pin:"",standardHours:"10",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly"});
+  const [form, setForm] = useState({name:"",pin:"",standardHours:"10",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly", phone:"", email:"", gender:"", address:""});
   const [err, setErr] = useState("");
 
   const save = async () => {
@@ -1785,7 +1919,7 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
     }
     await storage.set("employees", updated);
     setEmployees(updated);
-    setForm({name:"",pin:"",standardHours:"10",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly"});
+    setForm({name:"",pin:"",standardHours:"10",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly", phone:"", email:"", gender:"", address:""});
     setAdding(false); setEditingId(null); setErr("");
   };
 
@@ -1809,7 +1943,9 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
       name: emp.name, pin: emp.pin, hourlyRate: emp.hourlyRate || "", 
       dailySalary: emp.dailySalary || "", standardHours: emp.standardHours || "10", role: emp.role, 
       branch: emp.branch || branches[0] || "",
-      paymentCycle: emp.paymentCycle || "Weekly"
+      paymentCycle: emp.paymentCycle || "Weekly",
+      phone: emp.phone || "", email: emp.email || "",
+      gender: emp.gender || "", address: emp.address || ""
     });
     setEditingId(emp.id);
     setAdding(true);
@@ -1825,7 +1961,7 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
     <div className="fade-up">
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
         <h3 style={{fontSize:20}}>Staff Members ({fEmployees.length})</h3>
-        <button className="btn btn-gold btn-sm" onClick={() => { setAdding(p=>!p); if(adding) { setEditingId(null); setForm({name:"",pin:"",standardHours:"10",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly"}); }}}>
+        <button className="btn btn-gold btn-sm" onClick={() => { setAdding(p=>!p); if(adding) { setEditingId(null); setForm({name:"",pin:"",standardHours:"10",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly", phone:"", email:"", gender:"", address:""}); }}}>
           {adding ? "✕ Cancel" : "+ Add Staff"}
         </button>
       </div>
@@ -1873,6 +2009,34 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
               </select>
             </div>
           </div>
+          <div style={{borderTop:"1px solid var(--border)", margin:"16px 0", paddingTop:16}}>
+            <h4 style={{fontSize:14,color:"var(--text-2)",marginBottom:12}}>Profile Details (Optional)</h4>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+              <div>
+                <label className="field-label">Phone</label>
+                <input type="tel" placeholder="Phone" value={form.phone} onChange={e => setForm(p=>({...p,phone:e.target.value}))} className="input"/>
+              </div>
+              <div>
+                <label className="field-label">Email</label>
+                <input type="email" placeholder="Email" value={form.email} onChange={e => setForm(p=>({...p,email:e.target.value}))} className="input"/>
+              </div>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+              <div>
+                <label className="field-label">Gender</label>
+                <select className="input" value={form.gender} onChange={e => setForm(p=>({...p,gender:e.target.value}))}>
+                  <option value="">Select Gender</option>
+                  <option value="Male">Male</option>
+                  <option value="Female">Female</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+              <div>
+                <label className="field-label">Address</label>
+                <input type="text" placeholder="Address" value={form.address} onChange={e => setForm(p=>({...p,address:e.target.value}))} className="input"/>
+              </div>
+            </div>
+          </div>
           {err && <p style={{color:"var(--danger)",fontSize:13,marginBottom:12,padding:"8px 12px",background:"var(--danger-bg)",borderRadius:7}}>{err}</p>}
           <button className="btn btn-gold" style={{width:"100%"}} onClick={save}>Save Employee</button>
         </div>
@@ -1890,6 +2054,14 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
               <div>
                 <div style={{fontWeight:600}}>{emp.name}</div>
                 <div style={{fontSize:12,color:"var(--muted)"}}>{emp.role} {emp.branch ? `· ${emp.branch}` : ""} · {emp.paymentCycle || "Weekly"} · PIN: {emp.pin} · ₹{emp.dailySalary||0}/day (₹{emp.hourlyRate||0}/hr)</div>
+                {(emp.phone || emp.email || emp.gender || emp.address) && (
+                  <div style={{fontSize:11,color:"var(--text-2)",marginTop:4,display:"flex",gap:10,flexWrap:"wrap"}}>
+                    {emp.phone && <span>📞 {emp.phone}</span>}
+                    {emp.email && <span>✉️ {emp.email}</span>}
+                    {emp.gender && emp.gender !== "Select Gender" && <span>⚧ {emp.gender}</span>}
+                    {emp.address && <span>📍 {emp.address}</span>}
+                  </div>
+                )}
               </div>
             </div>
             <div style={{display:"flex", gap:8}}>
@@ -1923,9 +2095,15 @@ export default function App() {
     localStorage.removeItem("amigos_session");
   };
 
+  const handleUpdateEmployee = (updatedEmp) => {
+    const s = { ...session, employee: updatedEmp };
+    setSession(s);
+    localStorage.setItem("amigos_session", JSON.stringify(s));
+  };
+
   return !session
     ? <LoginScreen onLogin={handleLogin} />
     : session.role === "employee"
-      ? <EmployeeView employee={session.employee} onLogout={handleLogout} />
+      ? <EmployeeView employee={session.employee} onLogout={handleLogout} onUpdateEmployee={handleUpdateEmployee} />
       : <OwnerDashboard onLogout={handleLogout} />;
 }
