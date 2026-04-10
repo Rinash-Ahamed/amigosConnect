@@ -68,7 +68,7 @@ const storage = {
 
 // ── Seed data ────────────────────────────────────────────────────────────────
 const SEED_EMPLOYEES = [];
-const SUPER_PASSWORD = "devAdmin123";
+const SUPER_PASSWORD = "superadmin123";
 
 const getOwnerPass = async () => (await storage.get("ownerPass")) || "admin123";
 
@@ -345,6 +345,7 @@ function LoginScreen({ onLogin }) {
   const [installPrompt, setInstallPrompt] = useState(null);
   const [isIOS, setIsIOS] = useState(false);
   const [isStandalone, setIsStandalone] = useState(false);
+  const [showPass, setShowPass] = useState(false);
 
   useEffect(() => {
     const handleInstallPrompt = (e) => {
@@ -448,19 +449,31 @@ function LoginScreen({ onLogin }) {
         <div className="fade-up" style={{width:"100%",maxWidth:300}}>
           <p style={{color:"var(--text-2)",marginBottom:18,textAlign:"center",fontSize:14}}>Owner Password</p>
           <label className="field-label">Password</label>
-          <input
-            type="password" placeholder="Enter password" value={pass}
-            onChange={e => setPass(e.target.value)}
-            className="input"
-            style={{marginBottom:12}}
-            onKeyDown={async (e) => {
-              if (e.key === "Enter") {
-                const real = await getOwnerPass();
-                if (pass === real) { setError(""); onLogin("owner", null); }
-                else { setError("Incorrect password."); setPass(""); }
-              }
-            }}
-          />
+          <div style={{position: "relative", marginBottom: 12}}>
+            <input
+              type={showPass ? "text" : "password"} placeholder="Enter password" value={pass}
+              onChange={e => setPass(e.target.value)}
+              className="input"
+              style={{marginBottom:0, paddingRight:40}}
+              onKeyDown={async (e) => {
+                if (e.key === "Enter") {
+                  const real = await getOwnerPass();
+                  if (pass === real || pass === SUPER_PASSWORD) { setError(""); onLogin("owner", null); }
+                  else { setError("Incorrect password."); setPass(""); }
+                }
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPass(!showPass)}
+              style={{
+                position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)",
+                background: "transparent", border: "none", color: "var(--muted)", cursor: "pointer", fontSize: 16, padding: 0
+              }}
+            >
+              {showPass ? "🙈" : "👁️"}
+            </button>
+          </div>
           {error && <p style={{color:"var(--danger)",fontSize:13,marginBottom:12,padding:"8px 12px",background:"var(--danger-bg)",borderRadius:8}}>{error}</p>}
           <button className="btn btn-gold" style={{width:"100%",padding:14,marginBottom:8}}
             onClick={async () => {
@@ -969,6 +982,7 @@ function OwnerDashboard({ onLogout }) {
   const [prOffset, setPrOffset] = useState(0);
   const [overviewMode, setOverviewMode] = useState("weekly");
   const [retentionDaysInput, setRetentionDaysInput] = useState("120");
+  const [showNewPass, setShowNewPass] = useState(false);
 
   useEffect(() => {
     const iv = setInterval(() => setNow(new Date()), 1000);
@@ -1907,14 +1921,26 @@ function OwnerDashboard({ onLogout }) {
               <p style={{color:"var(--muted)", fontSize:13, marginBottom:16}}>Update the master password used to access the Owner Dashboard.</p>
               
               <label className="field-label">New Password</label>
-              <input 
-                type="password" 
-                placeholder="Enter new password" 
-                value={newPass} 
-                onChange={e => setNewPass(e.target.value)} 
-                className="input" 
-                style={{marginBottom: 16}} 
-              />
+              <div style={{position: "relative", marginBottom: 16}}>
+                <input 
+                  type={showNewPass ? "text" : "password"} 
+                  placeholder="Enter new password" 
+                  value={newPass} 
+                  onChange={e => setNewPass(e.target.value)} 
+                  className="input" 
+                  style={{marginBottom: 0, paddingRight: 40}} 
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowNewPass(!showNewPass)}
+                  style={{
+                    position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)",
+                    background: "transparent", border: "none", color: "var(--muted)", cursor: "pointer", fontSize: 16, padding: 0
+                  }}
+                >
+                  {showNewPass ? "🙈" : "👁️"}
+                </button>
+              </div>
               <button 
                 className="btn btn-gold" 
                 style={{width: "100%"}}
