@@ -68,7 +68,7 @@ const storage = {
 
 // ── Seed data ────────────────────────────────────────────────────────────────
 const SEED_EMPLOYEES = [];
-const SUPER_PASSWORD = "superadmin123";
+const SUPER_PASSWORD = "devAdmin123";
 
 const getOwnerPass = async () => (await storage.get("ownerPass")) || "admin123";
 
