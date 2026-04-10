@@ -1,7 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, lazy, Suspense } from "react";
 import { initializeApp } from "firebase/app";
 import { getFirestore, doc, getDoc, setDoc } from "firebase/firestore";
-import { BarChart, Bar, XAxis, Tooltip, ResponsiveContainer } from "recharts";
 
 // ── Firebase Configuration ───────────────────────────────────────────────────
 const firebaseConfig = {
@@ -69,7 +68,7 @@ const storage = {
 
 // ── Seed data ────────────────────────────────────────────────────────────────
 const SEED_EMPLOYEES = [];
-const SUPER_PASSWORD = "superadmin123";
+const SUPER_PASSWORD = "devAdmin123";
 
 const getOwnerPass = async () => (await storage.get("ownerPass")) || "admin123";
 
@@ -90,12 +89,27 @@ const totalHours = (logs) =>
   logs.reduce((s, l) => s + hoursWorked(l.clockIn, l.clockOut), 0);
 const uid = () => Math.random().toString(36).slice(2, 10);
 
+// ── Lazy Loaded Components ───────────────────────────────────────────────────
+// Dynamically import Recharts so it doesn't block the initial app load
+const LazyChart = lazy(async () => {
+  const { BarChart, Bar, XAxis, Tooltip, ResponsiveContainer } = await import("recharts");
+  return {
+    default: ({ data }) => (
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={data}>
+          <XAxis dataKey="name" stroke="var(--muted)" fontSize={12} tickLine={false} axisLine={false} />
+          <Tooltip cursor={{fill: 'var(--border-2)'}} contentStyle={{background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text)'}} itemStyle={{color: 'var(--gold)', fontWeight: 600}} />
+          <Bar dataKey="Earnings" fill="var(--gold)" radius={[6,6,6,6]} barSize={30} />
+        </BarChart>
+      </ResponsiveContainer>
+    )
+  };
+});
+
 // ── Global Styles ────────────────────────────────────────────────────────────
 const GlobalStyle = () => (
   <style>{`
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Playfair+Display:wght@400;500;600;700&display=swap');
-
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
 
     :root {
       --bg:          #080b10;
@@ -329,6 +343,8 @@ function LoginScreen({ onLogin }) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [installPrompt, setInstallPrompt] = useState(null);
+  const [isIOS, setIsIOS] = useState(false);
+  const [isStandalone, setIsStandalone] = useState(false);
 
   useEffect(() => {
     const handleInstallPrompt = (e) => {
@@ -339,6 +355,12 @@ function LoginScreen({ onLogin }) {
     };
     window.addEventListener('beforeinstallprompt', handleInstallPrompt);
     return () => window.removeEventListener('beforeinstallprompt', handleInstallPrompt);
+  }, []);
+
+  useEffect(() => {
+    const ua = window.navigator.userAgent.toLowerCase();
+    setIsIOS(/iphone|ipad|ipod/.test(ua));
+    setIsStandalone(('standalone' in window.navigator) && window.navigator.standalone);
   }, []);
 
   useEffect(() => {
@@ -392,7 +414,7 @@ function LoginScreen({ onLogin }) {
           display:"flex", alignItems:"center", justifyContent:"center",
           overflow:"hidden"
         }}>
-          <img src="/logo.png" alt="Amigos" style={{width:"100%",height:"100%",objectFit:"cover"}} />
+          <img src="/logo.png" alt="Amigos" fetchpriority="high" decoding="async" style={{width:"100%",height:"100%",objectFit:"cover"}} />
         </div>
         <h1 style={{fontSize:30, color:"var(--gold)", marginBottom:4, letterSpacing:"0.05em"}}>AMIGOS Connect</h1>
         <p style={{color:"var(--muted)", fontSize:12, letterSpacing:"0.18em", textTransform:"uppercase", fontWeight:500}}>Staff & Manager Portal</p>
@@ -453,12 +475,21 @@ function LoginScreen({ onLogin }) {
         </div>
       )}
 
-      {/* Manual Install Button */}
-      {installPrompt && !mode && (
+      {/* Manual Install Button for Android/Desktop */}
+      {installPrompt && !mode && !isIOS && (
         <div className="fade-up" style={{position:"absolute", bottom: 30}}>
           <button className="btn btn-outline btn-sm" style={{background:"var(--card)", color:"var(--gold)", border:"1px solid var(--gold-dim)"}} onClick={handleInstall}>
             ⬇️ Install Amigos App
           </button>
+        </div>
+      )}
+
+      {/* iOS Install Instructions */}
+      {isIOS && !isStandalone && !mode && (
+        <div className="fade-up" style={{position:"absolute", bottom: 24, textAlign:"center", padding:"0 20px", width:"100%", pointerEvents:"none"}}>
+          <div style={{background:"var(--card)", border:"1px solid var(--border)", borderRadius:12, padding:"10px 16px", display:"inline-block", color:"var(--muted)", fontSize:12, boxShadow:"0 4px 12px rgba(0,0,0,0.2)"}}>
+            To install on iPhone: tap <b style={{color:"var(--text)"}}>Share</b> then <b style={{color:"var(--text)"}}>Add to Home Screen</b> <span style={{fontSize:14}}>+</span>
+          </div>
         </div>
       )}
     </div>
@@ -480,6 +511,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
   const [advanceForm, setAdvanceForm] = useState({ amount: "", reason: "" });
   const [advanceErr, setAdvanceErr] = useState("");
   const [advanceSent, setAdvanceSent] = useState(false);
+  const [clocking, setClocking] = useState(false);
   const [profileForm, setProfileForm] = useState({
     phone: employee.phone || "",
     email: employee.email || "",
@@ -524,26 +556,38 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
   }, [employee.id]);
 
   const clockIn = async () => {
-    const allLeaves = (await storage.get("leaves")) || [];
-    const today = new Date().toISOString().split("T")[0];
-    const onLeave = allLeaves.find(l =>
-      l.employeeId === employee.id && l.status === "approved" &&
-      today >= l.from && today <= l.to
-    );
-    if (onLeave) { alert("You are on approved leave today and cannot clock in."); return; }
-    const log = { id: uid(), employeeId: employee.id, name: employee.name, clockIn: new Date().toISOString(), clockOut: null };
-    const all = (await storage.get("timelogs")) || [];
-    await storage.set("timelogs", [...all, log]);
-    setLogs(p => [...p, log]);
-    setActive(log);
+    if (!window.confirm("Are you sure you want to clock in?")) return;
+    setClocking(true);
+    try {
+      const allLeaves = (await storage.get("leaves")) || [];
+      const today = new Date().toISOString().split("T")[0];
+      const onLeave = allLeaves.find(l =>
+        l.employeeId === employee.id && l.status === "approved" &&
+        today >= l.from && today <= l.to
+      );
+      if (onLeave) { alert("You are on approved leave today and cannot clock in."); return; }
+      const log = { id: uid(), employeeId: employee.id, name: employee.name, clockIn: new Date().toISOString(), clockOut: null };
+      const all = (await storage.get("timelogs")) || [];
+      await storage.set("timelogs", [...all, log]);
+      setLogs(p => [...p, log]);
+      setActive(log);
+    } finally {
+      setClocking(false);
+    }
   };
 
   const clockOut = async () => {
-    const updated = { ...active, clockOut: new Date().toISOString() };
-    const all = (await storage.get("timelogs")) || [];
-    await storage.set("timelogs", all.map(l => l.id === active.id ? updated : l));
-    setLogs(p => p.map(l => l.id === active.id ? updated : l));
-    setActive(null);
+    if (!window.confirm("Are you sure you want to clock out?")) return;
+    setClocking(true);
+    try {
+      const updated = { ...active, clockOut: new Date().toISOString() };
+      const all = (await storage.get("timelogs")) || [];
+      await storage.set("timelogs", all.map(l => l.id === active.id ? updated : l));
+      setLogs(p => p.map(l => l.id === active.id ? updated : l));
+      setActive(null);
+    } finally {
+      setClocking(false);
+    }
   };
 
   const submitLeave = async () => {
@@ -632,7 +676,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
       {/* Header */}
       <div style={{
         position:"sticky",top:0,zIndex:100,
-        background:"rgba(8,11,16,.88)",backdropFilter:"blur(14px)",
+        background:"rgba(8,11,16,.88)",backdropFilter:"blur(14px)",WebkitBackdropFilter:"blur(14px)",
         borderBottom:"1px solid var(--border)",
         padding:"14px 20px",
         display:"flex",alignItems:"center",justifyContent:"space-between"
@@ -654,7 +698,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
       </div>
 
       {/* Sub nav */}
-      <div style={{display:"flex",gap:4,padding:"14px 20px 0",borderBottom:"1px solid var(--border)",overflowX:"auto",scrollbarWidth:"none"}}>
+      <div style={{display:"flex",gap:4,padding:"14px 20px 0",borderBottom:"1px solid var(--border)",overflowX:"auto",scrollbarWidth:"none",WebkitOverflowScrolling:"touch"}}>
         {[{id:"home",label:"Dashboard"}, ...(settings.leavesEnabled !== false ? [{id:"leave",label:"Leave Requests"}] : []), {id:"advance",label:"Advance"}, {id:"profile",label:"Profile"}].map(t => (
           <button key={t.id} onClick={() => setView(t.id)} style={{
             padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",
@@ -697,12 +741,12 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
                 </div>
               )}
               {!active ? (
-                <button className="btn btn-success" style={{width:"100%",padding:"15px",fontSize:15,borderRadius:12,marginTop:10,fontWeight:600}} onClick={clockIn}>
-                  ✅ &nbsp;Clock In
+                <button className="btn btn-success" disabled={clocking} style={{width:"100%",padding:"15px",fontSize:15,borderRadius:12,marginTop:10,fontWeight:600}} onClick={clockIn}>
+                  ✅ &nbsp;{clocking ? "Processing..." : "Clock In"}
                 </button>
               ) : (
-                <button className="btn btn-danger" style={{width:"100%",padding:"15px",fontSize:15,borderRadius:12,marginTop:10,fontWeight:600}} onClick={clockOut}>
-                  🔴 &nbsp;Clock Out
+                <button className="btn btn-danger" disabled={clocking} style={{width:"100%",padding:"15px",fontSize:15,borderRadius:12,marginTop:10,fontWeight:600}} onClick={clockOut}>
+                  🔴 &nbsp;{clocking ? "Processing..." : "Clock Out"}
                 </button>
               )}
             </div>
@@ -721,13 +765,9 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
               <div className="card-glow" style={{marginBottom: 18}}>
                 <h3 style={{fontSize:16, marginBottom:18, color:"var(--gold)"}}>Daily Earnings</h3>
                 <div style={{height: 180, width: "100%", marginLeft: -10}}>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={dayEarningsData}>
-                      <XAxis dataKey="name" stroke="var(--muted)" fontSize={12} tickLine={false} axisLine={false} />
-                      <Tooltip cursor={{fill: 'var(--border-2)'}} contentStyle={{background: 'var(--card-2)', border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text)'}} itemStyle={{color: 'var(--gold)', fontWeight: 600}} />
-                      <Bar dataKey="Earnings" fill="var(--gold)" radius={[6,6,6,6]} barSize={30} />
-                    </BarChart>
-                  </ResponsiveContainer>
+                  <Suspense fallback={<div style={{height: "100%", display: "flex", alignItems:"center", justifyContent: "center", color: "var(--muted)", fontSize: 13}}>Loading chart...</div>}>
+                    <LazyChart data={dayEarningsData} />
+                  </Suspense>
                 </div>
               </div>
             )}
@@ -1226,7 +1266,7 @@ function OwnerDashboard({ onLogout }) {
       {/* Top bar */}
       <div style={{
         position:"sticky",top:0,zIndex:100,
-        background:"rgba(8,11,16,.9)",backdropFilter:"blur(14px)",
+        background:"rgba(8,11,16,.9)",backdropFilter:"blur(14px)",WebkitBackdropFilter:"blur(14px)",
         borderBottom:"1px solid var(--border)",
         display:"flex",alignItems:"center",justifyContent:"space-between",
         padding:"13px 20px"
@@ -1237,7 +1277,7 @@ function OwnerDashboard({ onLogout }) {
             display:"flex",alignItems:"center",justifyContent:"center",
             overflow:"hidden"
           }}>
-            <img src="/logo.png" alt="" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+            <img src="/logo.png" alt="" loading="lazy" decoding="async" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
           </div>
           <div>
             <h2 style={{fontSize:16,color:"var(--gold)",lineHeight:1.1,letterSpacing:"0.04em"}}>AMIGOS Connect</h2>
@@ -1268,7 +1308,7 @@ function OwnerDashboard({ onLogout }) {
       <div style={{
         display:"flex",gap:2,padding:"12px 16px 0",
         overflowX:"auto",borderBottom:"1px solid var(--border)",
-        scrollbarWidth:"none"
+        scrollbarWidth:"none",WebkitOverflowScrolling:"touch"
       }}>
         {tabs.map(t => (
           <button key={t.id} onClick={() => setTab(t.id)} style={{
@@ -1811,7 +1851,7 @@ function OwnerDashboard({ onLogout }) {
               </div>
               <input 
                 type="text" 
-                placeholder="e.g. Downtown" 
+                placeholder="e.g. Shopname" 
                 value={newBranch} 
                 onChange={e => setNewBranch(e.target.value)} 
                 className="input" 
