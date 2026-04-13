@@ -1100,6 +1100,15 @@ function OwnerDashboard({ onLogout }) {
     await storage.set("advances", n); setAdvances(n);
   };
 
+  const clockOutAllActive = async () => {
+    if (!window.confirm(`Are you sure you want to clock out all ${activeSessions.length} active employees for ${selectedBranch === "All" ? "all branches" : selectedBranch}?`)) return;
+    const nowIso = new Date().toISOString();
+    const activeIds = new Set(activeSessions.map(s => s.id));
+    const updatedLogs = logs.map(l => activeIds.has(l.id) ? { ...l, clockOut: nowIso } : l);
+    await storage.set("timelogs", updatedLogs);
+    setLogs(updatedLogs);
+  };
+
   const updateSettings = async (newSt) => {
     const updated = { ...settings, ...newSt };
     setSettings(updated);
@@ -1138,6 +1147,7 @@ function OwnerDashboard({ onLogout }) {
       totalHours: 0,
       regularHours: 0,
       overtimeHours: 0,
+      deficitHours: 0,
       grossPay: 0,
       daysWorked: 0,
     };
@@ -1163,7 +1173,10 @@ function OwnerDashboard({ onLogout }) {
       const hours = dailyHours[date];
       details.totalHours += hours;
       if (hours > standardHours) { details.regularHours += standardHours; details.overtimeHours += hours - standardHours; } 
-      else { details.regularHours += hours; }
+      else { 
+        details.regularHours += hours; 
+        details.deficitHours += (standardHours - hours);
+      }
     }
     details.grossPay = details.totalHours * hourlyRate;
     return details;
@@ -1187,8 +1200,8 @@ function OwnerDashboard({ onLogout }) {
   const prEmployees = fEmployees.filter(emp => (emp.paymentCycle || "Weekly").toLowerCase() === prMode);
 
  const exportPayrollCSV = () => {
-  // 11 Columns defined here
-  const rows = [["Employee", "Branch", "Payment Cycle", "Days Worked", "Regular Hours", "Overtime Hours", "Total Hours", "Hourly Rate", "Gross Pay", "Advances Paid", "Net Pay"]];
+  // 13 Columns defined here
+  const rows = [["Employee", "Branch", "Payment Cycle", "Days Worked", "Standard Hrs/Day", "Regular Hours", "Overtime Hours", "Deficit Hours", "Total Hours", "Hourly Rate", "Gross Pay", "Advances Paid", "Net Pay"]];
   
   prEmployees.forEach(emp => {
     const wl = getPrLogs(emp.id).filter(l => l.clockOut);
@@ -1197,14 +1210,15 @@ function OwnerDashboard({ onLogout }) {
     const advance = getPrAdvances(emp.id).reduce((sum, a) => sum + a.amount, 0);
     const net = gross - advance;
 
-    // Ensure this array has exactly 11 elements to match the header
     rows.push([
       emp.name, 
       emp.branch || "—", 
       emp.paymentCycle || "Weekly", 
       payroll.daysWorked, 
+      emp.standardHours || 10,
       payroll.regularHours.toFixed(2), 
       payroll.overtimeHours.toFixed(2), 
+      payroll.deficitHours.toFixed(2),
       payroll.totalHours.toFixed(2), 
       emp.hourlyRate || 0, // Removed ₹ for better CSV compatibility
       gross.toFixed(2), 
@@ -1445,8 +1459,15 @@ function OwnerDashboard({ onLogout }) {
         {/* ── LIVE CLOCK ── */}
         {tab === "live" && (
           <div className="fade-up">
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-              <h3 style={{fontSize:20}}>Live Clock Activity</h3>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20,flexWrap:"wrap",gap:12}}>
+              <div style={{display:"flex",alignItems:"center",gap:16}}>
+                <h3 style={{fontSize:20,marginBottom:0}}>Live Clock Activity</h3>
+                {activeSessions.length > 0 && (
+                  <button className="btn btn-danger btn-sm" onClick={clockOutAllActive}>
+                    Clock Out All ({selectedBranch})
+                  </button>
+                )}
+              </div>
               <div style={{
                 fontSize:20,fontFamily:"'Playfair Display',serif",color:"var(--text-2)",
                 background:"var(--card)",border:"1px solid var(--border)",
@@ -1486,7 +1507,7 @@ function OwnerDashboard({ onLogout }) {
                       }}>
                         <span className="live-dot" style={{width:12,height:12}}/>
                       </div>
-                      <div>
+                      <div style={{textAlign: "left"}}>
                         <p style={{fontWeight:600}}>{sess.name}</p>
                         <p style={{fontSize:12,color:"var(--muted)"}}>{emp?.role} {emp?.branch ? `· ${emp.branch}` : ""} · Clocked in at <strong style={{color:"var(--text-2)"}}>{fmt(sess.clockIn)}</strong></p>
                       </div>
@@ -1513,7 +1534,7 @@ function OwnerDashboard({ onLogout }) {
                 const h = hoursWorked(l.clockIn, l.clockOut);
                 return (
                   <div key={l.id} className="card" style={{marginBottom:10,display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10}}>
-                    <div>
+                    <div style={{textAlign: "left"}}>
                       <p style={{fontWeight:600,fontSize:14}}>{l.name}</p>
                       <p style={{fontSize:12,color:"var(--muted)"}}>
                         {fmt(l.clockIn)} → {fmt(l.clockOut)} &nbsp;·&nbsp; {emp?.role} {emp?.branch ? `· ${emp.branch}` : ""}
@@ -1623,7 +1644,7 @@ function OwnerDashboard({ onLogout }) {
                   <div key={emp.id} className="card" style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
                     <div style={{textAlign:"left"}}>
                       <div style={{fontWeight:600,marginBottom:2}}>{emp.name}</div>
-                      <div style={{fontSize:12,color:"var(--muted)"}}>{emp.branch ? `${emp.branch} · ` : ""}{emp.paymentCycle || "Weekly"} · {payroll.daysWorked} days · {payroll.totalHours.toFixed(2)} hrs ({payroll.overtimeHours.toFixed(2)} OT) · ₹{emp.hourlyRate||0}/hr</div>
+                      <div style={{fontSize:12,color:"var(--muted)"}}>{emp.branch ? `${emp.branch} · ` : ""}{emp.paymentCycle || "Weekly"} · {payroll.daysWorked} days · {payroll.totalHours.toFixed(2)} hrs ({payroll.overtimeHours.toFixed(2)} OT, {payroll.deficitHours.toFixed(2)} Deficit) · ₹{emp.hourlyRate||0}/hr</div>
                     </div>
                     <div style={{textAlign:"right"}}>
                       <div style={{fontSize:13,color:"var(--muted)",fontWeight:500,marginBottom:2}}>Gross: ₹{gross.toFixed(2)}</div>
@@ -1967,7 +1988,7 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
-  const [form, setForm] = useState({name:"",pin:"",standardHours:"10",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly", phone:"", email:"", gender:"", address:""});
+  const [form, setForm] = useState({name:"",pin:"",employmentType:"Full-time",standardHours:"10",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly", phone:"", email:"", gender:"", address:""});
   const [err, setErr] = useState("");
 
   const save = async () => {
@@ -1985,7 +2006,7 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
     }
     await storage.set("employees", updated);
     setEmployees(updated);
-    setForm({name:"",pin:"",standardHours:"10",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly", phone:"", email:"", gender:"", address:""});
+    setForm({name:"",pin:"",employmentType:"Full-time",standardHours:"10",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly", phone:"", email:"", gender:"", address:""});
     setAdding(false); setEditingId(null); setErr("");
   };
 
@@ -2006,7 +2027,7 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
 
   const edit = (emp) => {
     setForm({
-      name: emp.name, pin: emp.pin, hourlyRate: emp.hourlyRate || "", 
+      name: emp.name, pin: emp.pin, employmentType: emp.employmentType || "Full-time", hourlyRate: emp.hourlyRate || "", 
       dailySalary: emp.dailySalary || "", standardHours: emp.standardHours || "10", role: emp.role, 
       branch: emp.branch || branches[0] || "",
       paymentCycle: emp.paymentCycle || "Weekly",
@@ -2027,7 +2048,7 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
     <div className="fade-up">
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
         <h3 style={{fontSize:20}}>Staff Members ({fEmployees.length})</h3>
-        <button className="btn btn-gold btn-sm" onClick={() => { setAdding(p=>!p); if(adding) { setEditingId(null); setForm({name:"",pin:"",standardHours:"10",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly", phone:"", email:"", gender:"", address:""}); }}}>
+        <button className="btn btn-gold btn-sm" onClick={() => { setAdding(p=>!p); if(adding) { setEditingId(null); setForm({name:"",pin:"",employmentType:"Full-time",standardHours:"10",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly", phone:"", email:"", gender:"", address:""}); }}}>
           {adding ? "✕ Cancel" : "+ Add Staff"}
         </button>
       </div>
@@ -2042,6 +2063,7 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
           {[
             {label:"Full Name",     key:"name",       type:"text",   ph:"e.g. Jane Smith"},
             {label:"4-Digit PIN",   key:"pin",        type:"text",   ph:"e.g. 5678"},
+            {label:"Employment Type", key:"employmentType", type:"select", options:["Full-time", "Part-time"]},
             {label:"Standard Hrs/Day", key:"standardHours", type:"number", ph:"e.g. 10"},
             {label:"Per Day Salary (₹)", key:"dailySalary", type:"number", ph:"e.g. 500"},
             {label:"Hourly Rate (₹)", key:"hourlyRate",type:"number", ph:"e.g. 11.50"},
@@ -2049,14 +2071,20 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
           ].map(f => (
             <div key={f.key} style={{marginBottom:12}}>
               <label className="field-label">{f.label}</label>
-              <input type={f.type} placeholder={f.ph} value={form[f.key]}
-                onChange={e => {
-                  const val = e.target.value;
-                  if (f.key === "dailySalary") setForm(p => ({...p, dailySalary: val, hourlyRate: val && p.standardHours ? (parseFloat(val)/parseFloat(p.standardHours)).toFixed(2) : p.hourlyRate}));
-                  else if (f.key === "standardHours") setForm(p => ({...p, standardHours: val, hourlyRate: val && p.dailySalary ? (parseFloat(p.dailySalary)/parseFloat(val)).toFixed(2) : p.hourlyRate}));
-                  else setForm(p => ({...p, [f.key]: val}));
-                }}
-                className="input"/>
+              {f.type === "select" ? (
+                <select className="input" value={form[f.key]} onChange={e => setForm(p=>({...p, [f.key]: e.target.value}))}>
+                  {f.options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                </select>
+              ) : (
+                <input type={f.type} placeholder={f.ph} value={form[f.key]}
+                  onChange={e => {
+                    const val = e.target.value;
+                    if (f.key === "dailySalary") setForm(p => ({...p, dailySalary: val, hourlyRate: val && p.standardHours ? (parseFloat(val)/parseFloat(p.standardHours)).toFixed(2) : p.hourlyRate}));
+                    else if (f.key === "standardHours") setForm(p => ({...p, standardHours: val, hourlyRate: val && p.dailySalary ? (parseFloat(p.dailySalary)/parseFloat(val)).toFixed(2) : p.hourlyRate}));
+                    else setForm(p => ({...p, [f.key]: val}));
+                  }}
+                  className="input"/>
+              )}
             </div>
           ))}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
@@ -2119,7 +2147,7 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
               }}>👤</div>
               <div>
                 <div style={{fontWeight:600}}>{emp.name}</div>
-                <div style={{fontSize:12,color:"var(--muted)"}}>{emp.role} {emp.branch ? `· ${emp.branch}` : ""} · {emp.paymentCycle || "Weekly"} · PIN: {emp.pin} · ₹{emp.dailySalary||0}/day (₹{emp.hourlyRate||0}/hr)</div>
+                <div style={{fontSize:12,color:"var(--muted)"}}>{emp.role} {emp.branch ? `· ${emp.branch}` : ""} · {emp.employmentType || "Full-time"} · {emp.paymentCycle || "Weekly"} · PIN: {emp.pin} · ₹{emp.dailySalary||0}/day (₹{emp.hourlyRate||0}/hr)</div>
                 {(emp.phone || emp.email || emp.gender || emp.address) && (
                   <div style={{fontSize:11,color:"var(--text-2)",marginTop:4,display:"flex",gap:10,flexWrap:"wrap"}}>
                     {emp.phone && <span>📞 {emp.phone}</span>}
