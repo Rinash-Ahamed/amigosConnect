@@ -1648,7 +1648,7 @@ function OwnerDashboard({ onLogout }) {
                       }}>
                         <span style={{color:"var(--muted)"}}>{fmtDate(l.clockIn)}</span>
                         <span>{fmt(l.clockIn)} → {l.clockOut ? fmt(l.clockOut) : <span style={{color:"var(--success)"}}>Active</span>}</span>
-                        <span style={{color:"var(--gold)"}}>{l.clockOut ? `${hoursWorked(l.clockIn,l.clockOut).toFixed(1)}h` : "—"}</span>
+                        <span style={{color:"var(--gold)"}}>{l.clockOut ? `${hoursWorked(l.clockIn,l.clockOut,l.breaks).toFixed(1)}h` : "—"}</span>
                         <button className="btn btn-danger btn-xs" onClick={() => deleteLog(l.id)}>✕</button>
                       </div>
                     ))
@@ -1679,10 +1679,22 @@ function OwnerDashboard({ onLogout }) {
               {prStart.toLocaleDateString("en-GB",{day:"numeric",month:"long"})} – {new Date(prEnd-1).toLocaleDateString("en-GB",{day:"numeric",month:"long"})}
             </p>
 
+            <div style={{marginBottom:16}}>
+              <label className="field-label">Search Staff</label>
+              <input
+                type="text"
+                className="input"
+                placeholder={`Search employee in ${selectedBranch === "All" ? "all branches" : selectedBranch}`}
+                value={payrollSearch}
+                onChange={e => setPayrollSearch(e.target.value)}
+                style={{marginBottom:0}}
+              />
+            </div>
+
             <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:20}}>
               {prEmployees.length === 0 && (
                 <div className="card" style={{textAlign:"center",padding:"28px",color:"var(--muted)",fontSize:13}}>
-                  No staff members on a {prMode} payment cycle for this branch.
+                  {payrollSearch.trim() ? "No staff found matching your search." : `No staff members on a ${prMode} payment cycle for this branch.`}
                 </div>
               )}
               {prEmployees.map(emp => {
@@ -2262,10 +2274,29 @@ export default function App() {
     localStorage.setItem("amigos_session", JSON.stringify(s));
   };
 
-  const handleLogout = () => {
-    setSession(null);
-    localStorage.removeItem("amigos_session");
-  };
+  const handleLogout = useCallback(() => {
+    setSession(null); // Clear the user session
+    localStorage.removeItem("amigos_session"); // Remove session from local storage
+  }, []);
+
+  useEffect(() => {
+    if (!session) return;
+    let timeoutId;
+    const resetTimer = () => {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        handleLogout();
+      }, 5 * 60 * 1000); // 5 minutes
+    };
+
+    resetTimer();
+    const events = ["mousemove", "keydown", "scroll", "touchstart", "click"];
+    events.forEach(e => window.addEventListener(e, resetTimer));
+    return () => {
+      clearTimeout(timeoutId);
+      events.forEach(e => window.removeEventListener(e, resetTimer));
+    };
+  }, [session, handleLogout]);
 
   const handleUpdateEmployee = (updatedEmp) => {
     const s = { ...session, employee: updatedEmp };
