@@ -81,12 +81,18 @@ const fmtDate = (iso) => {
   if (!iso) return "—";
   return new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 };
-const hoursWorked = (clockIn, clockOut) => {
+const hoursWorked = (clockIn, clockOut, breaks = []) => {
   if (!clockIn || !clockOut) return 0;
-  return Math.round(((new Date(clockOut) - new Date(clockIn)) / 3600000) * 100) / 100;
+  let totalMs = new Date(clockOut) - new Date(clockIn);
+  if (Array.isArray(breaks)) {
+    breaks.forEach(b => {
+      if (b.start && b.end) totalMs -= (new Date(b.end) - new Date(b.start));
+    });
+  }
+  return Math.max(0, Math.round((totalMs / 3600000) * 100) / 100);
 };
 const totalHours = (logs) =>
-  logs.reduce((s, l) => s + hoursWorked(l.clockIn, l.clockOut), 0);
+  logs.reduce((s, l) => s + hoursWorked(l.clockIn, l.clockOut, l.breaks), 0);
 const uid = () => Math.random().toString(36).slice(2, 10);
 const ownerPasswordIssues = (password) => {
   const pwd = password.trim();
@@ -1004,6 +1010,7 @@ function OwnerDashboard({ onLogout }) {
   const [timesheetSearch, setTimesheetSearch] = useState("");
   const [prMode, setPrMode] = useState("weekly");
   const [prOffset, setPrOffset] = useState(0);
+  const [payrollSearch, setPayrollSearch] = useState("");
   const [overviewMode, setOverviewMode] = useState("weekly");
   const [retentionDaysInput, setRetentionDaysInput] = useState("120");
   const [showNewPass, setShowNewPass] = useState(false);
@@ -1237,7 +1244,11 @@ function OwnerDashboard({ onLogout }) {
     a.download = `timesheets-${tsMode}-${timestamp}.csv`; a.click();
   };
 
-  const prEmployees = fEmployees.filter(emp => (emp.paymentCycle || "Weekly").toLowerCase() === prMode);
+  const prEmployees = fEmployees.filter(emp => {
+    const matchCycle = (emp.paymentCycle || "Weekly").toLowerCase() === prMode;
+    const matchSearch = !payrollSearch.trim() || emp.name.toLowerCase().includes(payrollSearch.trim().toLowerCase());
+    return matchCycle && matchSearch;
+  });
 
  const exportPayrollCSV = () => {
   // 13 Columns defined here
@@ -1281,12 +1292,12 @@ function OwnerDashboard({ onLogout }) {
       const emp = fEmployees.find(e => e.id === a.employeeId);
       rows.push([
         emp ? emp.name : "Unknown",
-        emp ? (emp.branch || "ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â") : "ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â",
+        emp ? (emp.branch || "—") : "—",
         a.amount,
         `"${(a.reason || "").replace(/"/g, '""')}"`,
         a.status,
         fmtDate(a.appliedAt),
-        a.paidAt ? fmtDate(a.paidAt) : (a.status === 'paid' ? fmtDate(a.appliedAt) : "ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â")
+        a.paidAt ? fmtDate(a.paidAt) : (a.status === 'paid' ? fmtDate(a.appliedAt) : "—")
       ]);
     });
     const csv = rows.map(r => r.join(",")).join("\n");
@@ -1565,7 +1576,7 @@ function OwnerDashboard({ onLogout }) {
               );
               return todayLogs.map(l => {
                 const emp = fEmployees.find(e => e.id === l.employeeId);
-                const h = hoursWorked(l.clockIn, l.clockOut);
+            const h = hoursWorked(l.clockIn, l.clockOut, l.breaks);
                 return (
                   <div key={l.id} className="card" style={{marginBottom:10,display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10}}>
                     <div style={{textAlign: "left"}}>
@@ -1662,7 +1673,7 @@ function OwnerDashboard({ onLogout }) {
         {/* ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ PAYROLL ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ */}
         {tab === "payroll" && (
           <div className="fade-up">
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10,flexWrap:"wrap",gap:10}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16,flexWrap:"wrap",gap:10}}>
               <div style={{display:"flex",alignItems:"center",gap:16}}>
                 <h3 style={{fontSize:20}}>Payroll Summary</h3>
                 <div style={{display:"flex",gap:4,alignItems:"center", background:"var(--card-2)", padding:"4px", borderRadius:10, border:"1px solid var(--border)"}}>
@@ -1672,12 +1683,13 @@ function OwnerDashboard({ onLogout }) {
               </div>
               <div style={{display:"flex",gap:8,alignItems:"center"}}>
                 <button className="btn btn-outline btn-sm" onClick={() => setPrOffset(p=>p-1)}>← Prev</button>
+                <span style={{fontSize:13,color:"var(--muted)",background:"var(--card)",border:"1px solid var(--border)",padding:"6px 12px",borderRadius:8}}>
+                  {prStart.toLocaleDateString("en-GB",{day:"numeric",month:"short"})} – {new Date(prEnd-1).toLocaleDateString("en-GB",{day:"numeric",month:"short"})}
+                </span>
                 <button className="btn btn-outline btn-sm" onClick={() => setPrOffset(p=>p+1)} disabled={prOffset===0}>Next →</button>
               </div>
+              <button className="btn btn-gold btn-sm" onClick={exportPayrollCSV}>⬇ Export {prMode==="weekly" ? "Week" : "Month"} CSV</button>
             </div>
-            <p style={{color:"var(--muted)",fontSize:13,marginBottom:20}}>
-              {prStart.toLocaleDateString("en-GB",{day:"numeric",month:"long"})} – {new Date(prEnd-1).toLocaleDateString("en-GB",{day:"numeric",month:"long"})}
-            </p>
 
             <div style={{marginBottom:16}}>
               <label className="field-label">Search Staff</label>
@@ -1723,14 +1735,13 @@ function OwnerDashboard({ onLogout }) {
             <div className="card-glow" style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:16}}>
               <div>
                 <p style={{color:"var(--muted)",fontSize:13}}>Total Net {prMode==="weekly"?"Weekly":"Monthly"} Payroll</p>
-                <p style={{color:"var(--muted)",fontSize:12}}>{totalPrHrs.toFixed(2)} hrs Ãƒâ€šÃ‚Â· {prEmployees.length} staff</p>
+                <p style={{color:"var(--muted)",fontSize:12}}>{totalPrHrs.toFixed(2)} hrs · {prEmployees.length} staff</p>
               </div>
               <div style={{textAlign:"right"}}>
                 <div style={{fontSize:14,color:"var(--muted)",fontWeight:500,marginBottom:4}}>Gross: ₹{totalPrGross.toFixed(2)} {totalPrAdvance > 0 && <span style={{color:"var(--danger)"}}>| Adv: -₹{totalPrAdvance.toFixed(2)}</span>}</div>
                 <div style={{fontSize:36,fontFamily:"'Playfair Display',serif",color:"var(--gold)",fontWeight:700,lineHeight:1}}>₹{totalPrPay.toFixed(2)}</div>
               </div>
             </div>
-            <button className="btn btn-gold" style={{width:"100%",marginTop:16,padding:14}} onClick={exportPayrollCSV}>⬇ Export Payroll as CSV</button>
           </div>
         )}
 
