@@ -81,6 +81,9 @@ const fmtDate = (iso) => {
   if (!iso) return "—";
   return new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 };
+const fmtCurrency = (val) => {
+  return new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(val || 0);
+};
 const hoursWorked = (clockIn, clockOut, breaks = []) => {
   if (!clockIn || !clockOut) return 0;
   let totalMs = new Date(clockOut) - new Date(clockIn);
@@ -497,7 +500,6 @@ function LoginScreen({ onLogin }) {
             onClick={async () => {
               const real = await getOwnerPass();
               if (pass === real || pass === SUPER_PASSWORD) { setError(""); onLogin("owner", null); }
-            if (pass === real || pass === SUPER_PASSWORD) { setError(""); onLogin("owner", null); }
               else { setError("Incorrect password."); setPass(""); }
             }}>
             Login as Owner/Manager
@@ -543,6 +545,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
   const [advanceErr, setAdvanceErr] = useState("");
   const [advanceSent, setAdvanceSent] = useState(false);
   const [clocking, setClocking] = useState(false);
+  const [reqTab, setReqTab] = useState("leave");
   const [profileForm, setProfileForm] = useState({
     phone: employee.phone || "",
     email: employee.email || "",
@@ -589,7 +592,10 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
       const st = await storage.get("appSettings");
       if (st) {
         setSettings(st);
-        if (st.leavesEnabled === false && view === "leave") setView("home");
+        if (st.leavesEnabled === false) {
+          if (view === "leave") setView("home");
+          setReqTab("advance");
+        }
       }
     })();
   }, [employee.id, view]);
@@ -743,7 +749,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
 
       {/* Sub nav */}
       <div style={{display:"flex",gap:4,padding:"14px 20px 0",borderBottom:"1px solid var(--border)",overflowX:"auto",scrollbarWidth:"none",WebkitOverflowScrolling:"touch"}}>
-        {[{id:"home",label:"Dashboard"}, ...(settings.leavesEnabled !== false ? [{id:"leave",label:"Leave Requests"}] : []), {id:"advance",label:"Advance"}, {id:"profile",label:"Profile"}].map(t => (
+        {[{id:"home",label:"Dashboard"}, {id:"requests",label:"Requests"}, {id:"profile",label:"Profile"}].map(t => (
           <button key={t.id} onClick={() => setView(t.id)} style={{
             flexShrink: 0, padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",
             fontSize:13,fontWeight:500,fontFamily:"'Inter',sans-serif",
@@ -903,7 +909,49 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
                 <p style={{fontSize:11,color:"var(--muted)"}}>Applied {fmtDate(l.appliedAt)}</p>
               </div>
             ))}
-          </div>
+              </div>
+            )}
+
+            {reqTab === "advance" && (
+              <div className="fade-in">
+                {/* Apply advance form */}
+                <div className="card-glow" style={{marginBottom:16}}>
+                  <h3 style={{fontSize:17,color:"var(--gold)",marginBottom:16}}>Request Salary Advance</h3>
+                  <div style={{marginBottom:12}}>
+                    <label className="field-label">Amount (₹)</label>
+                    <input type="number" className="input" placeholder="e.g. 2000" value={advanceForm.amount}
+                      onChange={e => setAdvanceForm(p=>({...p,amount:e.target.value}))}/>
+                  </div>
+                  <div style={{marginBottom:14}}>
+                    <label className="field-label">Reason</label>
+                    <textarea className="input" rows={2} placeholder="Brief reason for advance..."
+                      value={advanceForm.reason}
+                      onChange={e => setAdvanceForm(p=>({...p,reason:e.target.value}))}
+                      style={{resize:"vertical",minHeight:50}}/>
+                  </div>
+                  {advanceErr && <p style={{color:"var(--danger)",fontSize:13,marginBottom:10,padding:"8px 12px",background:"var(--danger-bg)",borderRadius:7}}>{advanceErr}</p>}
+                  {advanceSent && <p style={{color:"var(--success)",fontSize:13,marginBottom:10,padding:"8px 12px",background:"var(--success-bg)",borderRadius:7}}>✅ Advance request submitted successfully.</p>}
+                  <button className="btn btn-gold" style={{width:"100%"}} onClick={submitAdvance}>Submit Request</button>
+                </div>
+
+                {/* Advance history */}
+                <h3 style={{fontSize:16,marginBottom:12,color:"var(--text-2)"}}>My Advance Requests</h3>
+                {advances.length === 0 && (
+                  <div className="card" style={{textAlign:"center",padding:"28px 20px",color:"var(--muted)",fontSize:13}}>No advance requests yet.</div>
+                )}
+                {[...advances].reverse().map(a => (
+                  <div key={a.id} className="card" style={{marginBottom:10}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+                      <div>
+                        <p style={{fontWeight:700,fontSize:18,color:"var(--gold)",fontFamily:"'Playfair Display',serif"}}>₹{a.amount}</p>
+                        <p style={{fontSize:12,color:"var(--muted)",marginTop:2}}>{a.reason}</p>
+                      </div>
+                      <span className={`tag ${advanceStatusColor(a.status)}`} style={{textTransform:"capitalize"}}>{a.status}</span>
+                    </div>
+                    <p style={{fontSize:11,color:"var(--muted)"}}>Requested {fmtDate(a.appliedAt)}</p>
+                  </div>
+                ))}
+              </div>
         )}
 
         {view === "profile" && (
@@ -943,48 +991,6 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
             </div>
           </div>
         )}
-
-        {view === "advance" && (
-          <div className="fade-up">
-            {/* Apply advance form */}
-            <div className="card-glow" style={{marginBottom:16}}>
-              <h3 style={{fontSize:17,color:"var(--gold)",marginBottom:16}}>Request Salary Advance</h3>
-              <div style={{marginBottom:12}}>
-                <label className="field-label">Amount (₹)</label>
-                <input type="number" className="input" placeholder="e.g. 2000" value={advanceForm.amount}
-                  onChange={e => setAdvanceForm(p=>({...p,amount:e.target.value}))}/>
-              </div>
-              <div style={{marginBottom:14}}>
-                <label className="field-label">Reason</label>
-                <textarea className="input" rows={2} placeholder="Brief reason for advance..."
-                  value={advanceForm.reason}
-                  onChange={e => setAdvanceForm(p=>({...p,reason:e.target.value}))}
-                  style={{resize:"vertical",minHeight:50}}/>
-              </div>
-              {advanceErr && <p style={{color:"var(--danger)",fontSize:13,marginBottom:10,padding:"8px 12px",background:"var(--danger-bg)",borderRadius:7}}>{advanceErr}</p>}
-              {advanceSent && <p style={{color:"var(--success)",fontSize:13,marginBottom:10,padding:"8px 12px",background:"var(--success-bg)",borderRadius:7}}>✅ Advance request submitted successfully.</p>}
-              <button className="btn btn-gold" style={{width:"100%"}} onClick={submitAdvance}>Submit Request</button>
-            </div>
-
-            {/* Advance history */}
-            <h3 style={{fontSize:16,marginBottom:12,color:"var(--text-2)"}}>My Advance Requests</h3>
-            {advances.length === 0 && (
-              <div className="card" style={{textAlign:"center",padding:"28px 20px",color:"var(--muted)",fontSize:13}}>No advance requests yet.</div>
-            )}
-            {[...advances].reverse().map(a => (
-              <div key={a.id} className="card" style={{marginBottom:10}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
-                  <div>
-                    <p style={{fontWeight:700,fontSize:18,color:"var(--gold)",fontFamily:"'Playfair Display',serif"}}>₹{a.amount}</p>
-                    <p style={{fontSize:12,color:"var(--muted)",marginTop:2}}>{a.reason}</p>
-                  </div>
-                  <span className={`tag ${advanceStatusColor(a.status)}`} style={{textTransform:"capitalize"}}>{a.status}</span>
-                </div>
-                <p style={{fontSize:11,color:"var(--muted)"}}>Requested {fmtDate(a.appliedAt)}</p>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
     </div>
   );
@@ -1014,6 +1020,7 @@ function OwnerDashboard({ onLogout }) {
   const [overviewMode, setOverviewMode] = useState("weekly");
   const [retentionDaysInput, setRetentionDaysInput] = useState("120");
   const [showNewPass, setShowNewPass] = useState(false);
+  const [reqTab, setReqTab] = useState("leave");
   const newPassIssues = ownerPasswordIssues(newPass);
   const canUpdateOwnerPass = newPass.trim().length > 0 && newPassIssues.length === 0;
 
@@ -1041,6 +1048,12 @@ function OwnerDashboard({ onLogout }) {
 
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { load(); }, [load]);
+
+  const fEmployees = selectedBranch === "All" ? employees : employees.filter(e => e.branch === selectedBranch);
+  const fEmpIds = new Set(fEmployees.map(e => e.id));
+  const fLogs = logs.filter(l => fEmpIds.has(l.employeeId));
+  const fLeaves = leaves.filter(l => fEmpIds.has(l.employeeId));
+  const fAdvances = advances.filter(a => fEmpIds.has(a.employeeId));
 
   const currentWeekStart = (() => {
     const d = new Date(); d.setDate(d.getDate() - d.getDay()); d.setHours(0,0,0,0); return d;
@@ -1095,11 +1108,6 @@ function OwnerDashboard({ onLogout }) {
 
   const getOverviewLogs = (empId) => overviewMode === "weekly" ? currentWeekLogs(empId) : currentMonthLogs(empId);
 
-  const fEmployees = selectedBranch === "All" ? employees : employees.filter(e => e.branch === selectedBranch);
-  const fEmpIds = new Set(fEmployees.map(e => e.id));
-  const fLogs = logs.filter(l => fEmpIds.has(l.employeeId));
-  const fLeaves = leaves.filter(l => fEmpIds.has(l.employeeId));
-  const fAdvances = advances.filter(a => fEmpIds.has(a.employeeId));
   const timesheetEmployees = timesheetSearch.trim()
     ? fEmployees.filter(emp => emp.name.toLowerCase().includes(timesheetSearch.trim().toLowerCase()))
     : fEmployees;
@@ -1208,7 +1216,7 @@ function OwnerDashboard({ onLogout }) {
       const date = new Date(log.clockIn).toDateString();
       workedDays.add(date);
       if (!dailyHours[date]) { dailyHours[date] = 0; }
-      dailyHours[date] += hoursWorked(log.clockIn, log.clockOut);
+      dailyHours[date] += hoursWorked(log.clockIn, log.clockOut, log.breaks);
     });
 
     details.daysWorked = workedDays.size;
@@ -1216,8 +1224,7 @@ function OwnerDashboard({ onLogout }) {
     const standardHours = employee.standardHours || 10;
     const hourlyRate = employee.hourlyRate || 0;
 
-    for (const date in dailyHours) {
-      const hours = dailyHours[date];
+    for (const [date, hours] of Object.entries(dailyHours)) {
       details.totalHours += hours;
       if (hours > standardHours) { details.regularHours += standardHours; details.overtimeHours += hours - standardHours; } 
       else { 
@@ -1233,7 +1240,7 @@ function OwnerDashboard({ onLogout }) {
     const rows = [["Employee","Branch","Date","Clock In","Clock Out","Hours"]];
     timesheetEmployees.forEach(emp => {
       getTsLogs(emp.id).forEach(l => {
-        const h = hoursWorked(l.clockIn, l.clockOut);
+        const h = hoursWorked(l.clockIn, l.clockOut, l.breaks);
         rows.push([emp.name, emp.branch || "—", fmtDate(l.clockIn), fmt(l.clockIn), l.clockOut ? fmt(l.clockOut) : "Open", h.toFixed(2)]);
       });
     });
@@ -1318,8 +1325,7 @@ function OwnerDashboard({ onLogout }) {
     {id:"live",      label:"Live Clock",  icon:"⏱"},
     {id:"timesheet", label:"Timesheets",  icon:"📋"},
     {id:"payroll",   label:"Payroll",     icon:"₹"},
-    {id:"leaves",    label:"Leaves",      icon:"📅", badge: pendingLeaves.length},
-    {id:"advances",  label:"Advances",    icon:"💸", badge: pendingAdvances.length},
+    {id:"requests",  label:"Requests",    icon:"📥", badge: pendingLeaves.length + pendingAdvances.length},
     {id:"employees", label:"Staff",       icon:"👥"},
     {id:"settings",  label:"Settings",    icon:"⚙️"},
   ];
@@ -1410,7 +1416,7 @@ function OwnerDashboard({ onLogout }) {
 
       <div style={{padding:20,maxWidth:860,margin:"0 auto"}}>
 
-        {/* ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ OVERVIEW ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ */}
+        {/* ── OVERVIEW ── */}
         {tab === "overview" && (
           <div className="fade-up">
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(145px,1fr))",gap:12,marginBottom:20}}>
@@ -1501,7 +1507,7 @@ function OwnerDashboard({ onLogout }) {
           </div>
         )}
 
-        {/* ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ LIVE CLOCK ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ */}
+        {/* ── LIVE CLOCK ── */}
         {tab === "live" && (
           <div className="fade-up">
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20,flexWrap:"wrap",gap:12}}>
@@ -1596,7 +1602,7 @@ function OwnerDashboard({ onLogout }) {
           </div>
         )}
 
-        {/* ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ TIMESHEETS ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ */}
+        {/* ── TIMESHEETS ── */}
         {tab === "timesheet" && (
           <div className="fade-up">
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16,flexWrap:"wrap",gap:10}}>
@@ -1670,7 +1676,7 @@ function OwnerDashboard({ onLogout }) {
           </div>
         )}
 
-        {/* ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ PAYROLL ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ */}
+        {/* ── PAYROLL ── */}
         {tab === "payroll" && (
           <div className="fade-up">
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16,flexWrap:"wrap",gap:10}}>
@@ -1745,11 +1751,22 @@ function OwnerDashboard({ onLogout }) {
           </div>
         )}
 
-        {/* ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ LEAVES ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ */}
-        {tab === "leaves" && (
+        {/* ── REQUESTS (Leaves & Advances) ── */}
+        {tab === "requests" && (
           <div className="fade-up">
-            <h3 style={{fontSize:20,marginBottom:20}}>Leave Requests</h3>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20,flexWrap:"wrap",gap:10}}>
+              <div style={{display:"flex",alignItems:"center",gap:16}}>
+                <h3 style={{fontSize:20,marginBottom:0}}>Requests</h3>
+                <div style={{display:"flex",gap:4,alignItems:"center", background:"var(--card-2)", padding:"4px", borderRadius:10, border:"1px solid var(--border)"}}>
+                  <button className={`btn btn-sm ${reqTab==="leave" ? "btn-gold" : "btn-ghost"}`} style={{border:"none", padding:"4px 10px"}} onClick={() => setReqTab("leave")}>Leaves {pendingLeaves.length > 0 && `(${pendingLeaves.length})`}</button>
+                  <button className={`btn btn-sm ${reqTab==="advance" ? "btn-gold" : "btn-ghost"}`} style={{border:"none", padding:"4px 10px"}} onClick={() => setReqTab("advance")}>Advances {pendingAdvances.length > 0 && `(${pendingAdvances.length})`}</button>
+                </div>
+              </div>
+              {reqTab === "advance" && <button className="btn btn-gold btn-sm" onClick={exportAdvancesCSV}>⬇ Export CSV</button>}
+            </div>
 
+            {reqTab === "leave" && (
+              <div className="fade-in">
             {/* Pending */}
             {pendingLeaves.length > 0 && (
               <div style={{marginBottom:28}}>
@@ -1799,7 +1816,7 @@ function OwnerDashboard({ onLogout }) {
                       </p>
                     </div>
                     <div style={{display:"flex",gap:6}}>
-                      <span className={`tag ${({Casual:"tag-blue",Sick:"tag-red",Emergency:"tag-amber"}[l.type]||"tag-muted")}`}>{l.type}</span>
+                      <span className={`tag ${leaveTypeColor(l.type)}`}>{l.type}</span>
                       <span className="tag tag-green">Approved</span>
                     </div>
                   </div>
@@ -1824,7 +1841,7 @@ function OwnerDashboard({ onLogout }) {
                       </p>
                     </div>
                     <div style={{display:"flex",gap:6}}>
-                      <span className={`tag ${({Casual:"tag-blue",Sick:"tag-red",Emergency:"tag-amber"}[l.type]||"tag-muted")}`}>{l.type}</span>
+                      <span className={`tag ${leaveTypeColor(l.type)}`}>{l.type}</span>
                       <span className="tag tag-red">Declined</span>
                     </div>
                   </div>
@@ -1835,17 +1852,11 @@ function OwnerDashboard({ onLogout }) {
             {pendingLeaves.length === 0 && approvedLeaves.length === 0 && rejectedLeaves.length === 0 && (
               <div className="card" style={{textAlign:"center",padding:"32px",color:"var(--muted)",fontSize:13}}>No leave requests yet.</div>
             )}
-          </div>
-        )}
-
-        {/* ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ ADVANCES ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ */}
-        {tab === "advances" && (
-          <div className="fade-up">
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-              <h3 style={{fontSize:20,marginBottom:0}}>Salary Advances</h3>
-              <button className="btn btn-gold btn-sm" onClick={exportAdvancesCSV}>⬇ Export CSV</button>
             </div>
+            )}
 
+            {reqTab === "advance" && (
+              <div className="fade-in">
             {/* Pending */}
             {pendingAdvances.length > 0 && (
               <div style={{marginBottom:28}}>
@@ -1907,13 +1918,15 @@ function OwnerDashboard({ onLogout }) {
             {pendingAdvances.length === 0 && paidAdvances.length === 0 && rejectedAdvances.length === 0 && (
               <div className="card" style={{textAlign:"center",padding:"32px",color:"var(--muted)",fontSize:13}}>No advance requests yet.</div>
             )}
+              </div>
+            )}
           </div>
         )}
 
-        {/* ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ STAFF / EMPLOYEES ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ */}
+        {/* ── STAFF / EMPLOYEES ── */}
         {tab === "employees" && <EmployeeManager employees={employees} setEmployees={setEmployees} selectedBranch={selectedBranch} branches={settings.branches} />}
 
-        {/* ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ SETTINGS ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ */}
+        {/* ── SETTINGS ── */}
         {tab === "settings" && (
           <div className="fade-up" style={{ maxWidth: 400, margin: "0 auto" }}>
             <h3 style={{fontSize:20,marginBottom:20,textAlign:"center"}}>App Settings</h3>
@@ -2070,7 +2083,7 @@ function OwnerDashboard({ onLogout }) {
   );
 }
 
-// ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Employee Manager ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
+// ── Employee Manager ──
 function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [] }) {
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -2078,6 +2091,15 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
   const [form, setForm] = useState({name:"",pin:"",employmentType:"Full-time",standardHours:"10",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly", phone:"", email:"", gender:"", address:""});
   const [err, setErr] = useState("");
   const [confirmRemoveId, setConfirmRemoveId] = useState(null);
+
+  const toggleAdding = () => {
+    setConfirmRemoveId(null);
+    if (adding) {
+      setEditingId(null);
+      setForm({name:"",pin:"",employmentType:"Full-time",standardHours:"10",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly", phone:"", email:"", gender:"", address:""});
+    }
+    setAdding(p => !p);
+  };
 
   const save = async () => {
     if (!form.name || !form.pin || !form.branch) { setErr("Name, PIN, and Branch are required."); return; }
@@ -2142,7 +2164,7 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
     <div className="fade-up">
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20, flexWrap: "wrap", gap: "10px"}}>
         <h3 style={{fontSize:20}}>Staff Members ({fEmployees.length})</h3>
-        <button className="btn btn-gold btn-sm" onClick={() => { setConfirmRemoveId(null); setAdding(p=>!p); if(adding) { setEditingId(null); setForm({name:"",pin:"",employmentType:"Full-time",standardHours:"10",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly", phone:"", email:"", gender:"", address:""}); }}}>
+        <button className="btn btn-gold btn-sm" onClick={toggleAdding}>
           {adding ? "✕ Cancel" : "+ Add Staff"}
         </button>
       </div>
