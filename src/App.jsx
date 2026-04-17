@@ -4,12 +4,12 @@ import { getFirestore, doc, getDoc, setDoc } from "firebase/firestore";
 
 // ── Firebase Configuration ──
 const firebaseConfig = {
-  apiKey: "AIzaSyBBoY91BXif2R9pi5smWyty0R-gleqmy6g",
-  authDomain: "amigosconnect-fdb11.firebaseapp.com",
-  projectId: "amigosconnect-fdb11",
-  storageBucket: "amigosconnect-fdb11.firebasestorage.app",
-  messagingSenderId: "99472736361",
-  appId: "1:99472736361:web:ba0eaebb8adb1f1c2462f8"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID
 };
 
 const app = initializeApp(firebaseConfig);
@@ -1860,7 +1860,7 @@ function OwnerDashboard({ onLogout }) {
                   }}>
                     <div>
                       <p style={{fontWeight:600,fontSize:15}}>{a.name}</p>
-                      <p style={{fontSize:20,color:"var(--gold)",marginTop:2, fontFamily:"'Playfair Display',serif", fontWeight:700}}>₹{a.amount}</p>
+                      <p style={{fontSize:20,color:"var(--gold)",marginTop:2, fontFamily:"'Playfair Display',serif", fontWeight:700}}>₹{fmtCurrency(a.amount)}</p>
                       <p style={{fontSize:12,color:"var(--muted)",marginTop:4}}>{a.reason}</p>
                       <p style={{fontSize:11,color:"var(--text-2)",marginTop:4}}>Requested {fmtDate(a.appliedAt)}</p>
                     </div>
@@ -1880,7 +1880,7 @@ function OwnerDashboard({ onLogout }) {
                 {[...paidAdvances].reverse().map(a => (
                   <div key={a.id} className="card" style={{marginBottom:10,display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:10}}>
                     <div>
-                      <p style={{fontWeight:600,fontSize:14}}>{a.name} <span style={{color:"var(--muted)",fontWeight:400}}>· ₹{a.amount}</span></p>
+                      <p style={{fontWeight:600,fontSize:14}}>{a.name} <span style={{color:"var(--muted)",fontWeight:400}}>· ₹{fmtCurrency(a.amount)}</span></p>
                       <p style={{fontSize:12,color:"var(--muted)"}}>Req: {fmtDate(a.appliedAt)}{a.paidAt ? ` · Paid: ${fmtDate(a.paidAt)}` : ""} · {a.reason}</p>
                     </div>
                     <span className="tag tag-green">Paid</span>
@@ -1896,7 +1896,7 @@ function OwnerDashboard({ onLogout }) {
                 {[...rejectedAdvances].reverse().map(a => (
                   <div key={a.id} className="card" style={{marginBottom:10,display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:10}}>
                     <div>
-                      <p style={{fontWeight:600,fontSize:14}}>{a.name} <span style={{color:"var(--muted)",fontWeight:400}}>· ₹{a.amount}</span></p>
+                      <p style={{fontWeight:600,fontSize:14}}>{a.name} <span style={{color:"var(--muted)",fontWeight:400}}>· ₹{fmtCurrency(a.amount)}</span></p>
                       <p style={{fontSize:12,color:"var(--muted)"}}>{fmtDate(a.appliedAt)} · {a.reason}</p>
                     </div>
                     <span className="tag tag-red">Rejected</span>
