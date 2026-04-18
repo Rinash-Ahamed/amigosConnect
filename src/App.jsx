@@ -2204,7 +2204,7 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20, flexWrap: "wrap", gap: "10px"}}>
         <h3 style={{fontSize:20}}>Staff Members ({fEmployees.length})</h3>
         <button className="btn btn-gold btn-sm" onClick={() => { setConfirmRemoveId(null); setAdding(p=>!p); if(adding) { setEditingId(null); setForm({name:"",pin:"",employmentType:"Full-time",standardHours:"10",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly", phone:"", email:"", gender:"", address:""}); }}}>
-          {adding ? "<X size={14}/> Cancel" : "+ Add Staff"}
+          {adding ? "Cancel" : "+ Add Staff"}
         </button>
       </div>
 
