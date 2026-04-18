@@ -1,4 +1,10 @@
-import { useState, useEffect, useCallback, lazy, Suspense } from "react";
+import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from "react";
+import { 
+  CheckCircle, StopCircle, Play, Coffee, User, Briefcase, Calendar, 
+  Download, Clock, Check, X, Inbox, ClipboardList, IndianRupee, 
+  Users, Settings, LayoutDashboard, Timer, Phone, Mail, MapPin, 
+  Edit2, Trash2, Flag, Eye, EyeOff, ChevronLeft, ChevronRight, LogOut 
+} from "lucide-react";
 import { initializeApp } from "firebase/app";
 import { getFirestore, doc, getDoc, setDoc } from "firebase/firestore";
 
@@ -84,11 +90,6 @@ const fmtDate = (iso) => {
 const hoursWorked = (clockIn, clockOut, breaks = []) => {
   if (!clockIn || !clockOut) return 0;
   let totalMs = new Date(clockOut) - new Date(clockIn);
-  if (Array.isArray(breaks)) {
-    breaks.forEach(b => {
-      if (b.start && b.end) totalMs -= (new Date(b.end) - new Date(b.start));
-    });
-  }
   return Math.max(0, Math.round((totalMs / 3600000) * 100) / 100);
 };
 const totalHours = (logs) =>
@@ -443,11 +444,11 @@ function LoginScreen({ onLogin }) {
         <div className="fade-up" style={{width:"100%",maxWidth:320,display:"flex",flexDirection:"column",gap:12}}>
           <button className="btn btn-gold" style={{padding:"17px",fontSize:15,borderRadius:13,width:"100%"}}
             onClick={() => { setMode("employee"); setError(""); }}>
-            <span style={{fontSize:18}}>🧑‍💼</span> Employee Login
+            <User size={18} /> Employee Login
           </button>
           <button className="btn btn-outline" style={{padding:"17px",fontSize:15,borderRadius:13,width:"100%"}}
             onClick={() => { setMode("owner"); setError(""); }}>
-            <span style={{fontSize:18}}>👔</span> Owner / Manager
+            <Briefcase size={18} /> Owner / Manager
           </button>
         </div>
       ) : mode === "employee" ? (
@@ -460,7 +461,7 @@ function LoginScreen({ onLogin }) {
             </p>
           )}
           <button className="btn btn-ghost btn-sm" style={{marginTop:20,width:"100%"}} onClick={() => { setMode(null); setPin(""); setError(""); }}>
-            ← Back
+            <ChevronLeft size={14}/> Back
           </button>
         </div>
       ) : (
@@ -489,7 +490,7 @@ function LoginScreen({ onLogin }) {
                 background: "transparent", border: "none", color: "var(--muted)", cursor: "pointer", fontSize: 16, padding: 0
               }}
             >
-              {showPass ? "🙈" : "👁️"}
+              {showPass ? <EyeOff size={16}/> : <Eye size={16}/>}
             </button>
           </div>
           {error && <p style={{color:"var(--danger)",fontSize:13,marginBottom:12,padding:"8px 12px",background:"var(--danger-bg)",borderRadius:8}}>{error}</p>}
@@ -502,7 +503,7 @@ function LoginScreen({ onLogin }) {
             }}>
             Login as Owner/Manager
           </button>
-          <button className="btn btn-ghost btn-sm" style={{width:"100%"}} onClick={() => { setMode(null); setPass(""); setError(""); }}>← Back</button>
+          <button className="btn btn-ghost btn-sm" style={{width:"100%"}} onClick={() => { setMode(null); setPass(""); setError(""); }}><ChevronLeft size={14}/> Back</button>
         </div>
       )}
 
@@ -510,7 +511,7 @@ function LoginScreen({ onLogin }) {
       {installPrompt && !mode && !isIOS && (
         <div className="fade-up" style={{position:"absolute", bottom: 30}}>
           <button className="btn btn-outline btn-sm" style={{background:"var(--card)", color:"var(--gold)", border:"1px solid var(--gold-dim)"}} onClick={handleInstall}>
-            ⬇️ Install Amigos App
+            <Download size={14}/> Install Amigos App
           </button>
         </div>
       )}
@@ -619,11 +620,52 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
     if (!window.confirm("Are you sure you want to clock out?")) return;
     setClocking(true);
     try {
-      const updated = { ...active, clockOut: new Date().toISOString() };
+      let finalActive = { ...active };
+      // auto-end any open break
+      if (finalActive.breaks && finalActive.breaks.length > 0) {
+        const lastBreak = finalActive.breaks[finalActive.breaks.length - 1];
+        if (!lastBreak.end) {
+          const updatedBreaks = [...finalActive.breaks];
+          updatedBreaks[updatedBreaks.length - 1] = { ...lastBreak, end: new Date().toISOString() };
+          finalActive.breaks = updatedBreaks;
+        }
+      }
+      const updated = { ...finalActive, clockOut: new Date().toISOString() };
       const all = (await storage.get("timelogs")) || [];
       await storage.set("timelogs", all.map(l => l.id === active.id ? updated : l));
       setLogs(p => p.map(l => l.id === active.id ? updated : l));
       setActive(null);
+    } finally {
+      setClocking(false);
+    }
+  };
+
+  const startBreak = async () => {
+    setClocking(true);
+    try {
+      const updatedBreaks = [...(active.breaks || []), { start: new Date().toISOString(), end: null }];
+      const updated = { ...active, breaks: updatedBreaks };
+      const all = (await storage.get("timelogs")) || [];
+      await storage.set("timelogs", all.map(l => l.id === active.id ? updated : l));
+      setLogs(p => p.map(l => l.id === active.id ? updated : l));
+      setActive(updated);
+    } finally {
+      setClocking(false);
+    }
+  };
+
+  const endBreak = async () => {
+    setClocking(true);
+    try {
+      const updatedBreaks = [...(active.breaks || [])];
+      if (updatedBreaks.length > 0 && !updatedBreaks[updatedBreaks.length - 1].end) {
+        updatedBreaks[updatedBreaks.length - 1] = { ...updatedBreaks[updatedBreaks.length - 1], end: new Date().toISOString() };
+      }
+      const updated = { ...active, breaks: updatedBreaks };
+      const all = (await storage.get("timelogs")) || [];
+      await storage.set("timelogs", all.map(l => l.id === active.id ? updated : l));
+      setLogs(p => p.map(l => l.id === active.id ? updated : l));
+      setActive(updated);
     } finally {
       setClocking(false);
     }
@@ -678,39 +720,42 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
     setTimeout(() => setAdvanceSent(false), 4000);
   };
 
-  const weekLogs = logs.filter(l => {
+  const weekLogs = useMemo(() => logs.filter(l => {
     const d = new Date(l.clockIn);
     const s = new Date(); s.setDate(s.getDate() - s.getDay()); s.setHours(0,0,0,0);
     return d >= s;
-  });
+  }), [logs]);
 
-  const hrs = totalHours(weekLogs.filter(l => l.clockOut));
+  const hrs = useMemo(() => totalHours(weekLogs.filter(l => l.clockOut)), [weekLogs]);
   const elapsed = active ? Math.floor((now - new Date(active.clockIn)) / 1000) : 0;
 
-  const weekStart = new Date(); weekStart.setDate(weekStart.getDate() - weekStart.getDay()); weekStart.setHours(0,0,0,0);
-  const weekHoursData = Array.from({ length: 7 }, (_, index) => {
-    const day = new Date(weekStart);
-    day.setDate(weekStart.getDate() + index);
-    return {
-      dateKey: day.toDateString(),
-      name: day.toLocaleDateString("en-US", { weekday: "short" }),
-      Hours: 0,
-    };
-  });
-  const logsByDay = Object.fromEntries(weekHoursData.map(day => [day.dateKey, day]));
-  weekLogs.filter(l => l.clockOut).forEach(l => {
-    const d = new Date(l.clockIn).toDateString();
-    if (logsByDay[d]) logsByDay[d].Hours += hoursWorked(l.clockIn, l.clockOut);
-  });
+  const weekHoursData = useMemo(() => {
+    const weekStart = new Date(); weekStart.setDate(weekStart.getDate() - weekStart.getDay()); weekStart.setHours(0,0,0,0);
+    const data = Array.from({ length: 7 }, (_, index) => {
+      const day = new Date(weekStart);
+      day.setDate(weekStart.getDate() + index);
+      return {
+        dateKey: day.toDateString(),
+        name: day.toLocaleDateString("en-US", { weekday: "short" }),
+        Hours: 0,
+      };
+    });
+    const logsByDay = Object.fromEntries(data.map(day => [day.dateKey, day]));
+    weekLogs.filter(l => l.clockOut).forEach(l => {
+      const d = new Date(l.clockIn).toDateString();
+      if (logsByDay[d]) logsByDay[d].Hours += hoursWorked(l.clockIn, l.clockOut);
+    });
+    data.forEach(day => {
+      day.Hours = Math.round(day.Hours * 10) / 10;
+    });
+    return data;
+  }, [weekLogs]);
 
-  weekHoursData.forEach(day => {
-    day.Hours = Math.round(day.Hours * 10) / 10;
-  });
   const elapsedStr = `${String(Math.floor(elapsed/3600)).padStart(2,"0")}:${String(Math.floor((elapsed%3600)/60)).padStart(2,"0")}:${String(elapsed%60).padStart(2,"0")}`;
 
-  const leaveTypeColor = (t) => ({Casual:"tag-blue", Sick:"tag-red", Emergency:"tag-amber"}[t] || "tag-muted");
-  const leaveStatusColor = (s) => ({pending:"tag-amber", approved:"tag-green", rejected:"tag-red"}[s] || "tag-muted");
-  const advanceStatusColor = (s) => ({pending:"tag-amber", paid:"tag-green", rejected:"tag-red"}[s] || "tag-muted");
+  const leaveTypeColor = useCallback((t) => ({Casual:"tag-blue", Sick:"tag-red", Emergency:"tag-amber"}[t] || "tag-muted"), []);
+  const leaveStatusColor = useCallback((s) => ({pending:"tag-amber", approved:"tag-green", rejected:"tag-red"}[s] || "tag-muted"), []);
+  const advanceStatusColor = useCallback((s) => ({pending:"tag-amber", paid:"tag-green", rejected:"tag-red"}[s] || "tag-muted"), []);
 
   return (
     <div style={{minHeight:"100vh",background:"var(--bg)"}}>
@@ -731,7 +776,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
             background:"var(--gold-glow)",border:"1px solid rgba(212,168,67,.25)",
             display:"flex",alignItems:"center",justifyContent:"center"
           }}>
-            <span style={{fontSize:16}}>👤</span>
+            <User size={16} />
           </div>
           <div style={{textAlign: "left", minWidth: 0, overflow: "hidden"}}>
             <p style={{fontSize:15,fontWeight:600,lineHeight:1.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis"}}>{employee.name}</p>
@@ -786,18 +831,32 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
               )}
               {!active ? (
                 <button className="btn btn-success" disabled={clocking} style={{width:"100%",padding:"15px",fontSize:15,borderRadius:12,marginTop:10,fontWeight:600}} onClick={clockIn}>
-                  ✅ &nbsp;{clocking ? "Processing..." : "Clock In"}
+                  <CheckCircle size={16} />&nbsp;{clocking ? "Processing..." : "Clock In"}
                 </button>
               ) : (
-                <button className="btn btn-danger" disabled={clocking} style={{width:"100%",padding:"15px",fontSize:15,borderRadius:12,marginTop:10,fontWeight:600}} onClick={clockOut}>
-                  🔴 &nbsp;{clocking ? "Processing..." : "Clock Out"}
-                </button>
+                <div style={{display:"flex",flexDirection:"column",gap:10,marginTop:10}}>
+                  {(() => {
+                    const onBreak = active.breaks && active.breaks.length > 0 && !active.breaks[active.breaks.length - 1].end;
+                    return onBreak ? (
+                      <button className="btn btn-gold" disabled={clocking} style={{width:"100%",padding:"15px",fontSize:15,borderRadius:12,fontWeight:600}} onClick={endBreak}>
+                        <Play size={16} />&nbsp;{clocking ? "Processing..." : "Resume Work"}
+                      </button>
+                    ) : (
+                      <button className="btn btn-amber" disabled={clocking} style={{width:"100%",padding:"15px",fontSize:15,borderRadius:12,fontWeight:600}} onClick={startBreak}>
+                        <Coffee size={16} />&nbsp;{clocking ? "Processing..." : "Take a Break"}
+                      </button>
+                    );
+                  })()}
+                  <button className="btn btn-danger" disabled={clocking} style={{width:"100%",padding:"15px",fontSize:15,borderRadius:12,fontWeight:600}} onClick={clockOut}>
+                    <StopCircle size={16} />&nbsp;{clocking ? "Processing..." : "Clock Out"}
+                  </button>
+                </div>
               )}
             </div>
 
             {/* Stats row */}
             <div className="card" style={{display:"flex",alignItems:"center",gap:16,marginBottom:18}}>
-              <div style={{fontSize:36}}>📅</div>
+              <div style={{color:"var(--gold)"}}><Calendar size={36} /></div>
               <div>
                 <div style={{fontSize:26,fontWeight:700,color:"var(--gold)",fontFamily:"'Playfair Display',serif"}}>{hrs.toFixed(1)} hrs</div>
                 <div style={{fontSize:13,color:"var(--muted)",fontWeight:500}}>Worked This Week</div>
@@ -874,7 +933,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
                   style={{resize:"vertical",minHeight:70}}/>
               </div>
               {leaveErr && <p style={{color:"var(--danger)",fontSize:13,marginBottom:10,padding:"8px 12px",background:"var(--danger-bg)",borderRadius:7}}>{leaveErr}</p>}
-              {leaveSent && <p style={{color:"var(--success)",fontSize:13,marginBottom:10,padding:"8px 12px",background:"var(--success-bg)",borderRadius:7}}>✅ Leave request submitted successfully.</p>}
+              {leaveSent && <p style={{color:"var(--success)",fontSize:13,marginBottom:10,padding:"8px 12px",background:"var(--success-bg)",borderRadius:7}}><CheckCircle size={16} style={{display:"inline", verticalAlign:"middle", marginRight:4}} /> Leave request submitted successfully.</p>}
               <button className="btn btn-gold" style={{width:"100%"}} onClick={submitLeave}>Submit Request</button>
             </div>
 
@@ -938,7 +997,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
                   onChange={e => setProfileForm(p=>({...p,address:e.target.value}))}
                   style={{resize:"vertical",minHeight:60}}/>
               </div>
-              {profileSaved && <p style={{color:"var(--success)",fontSize:13,marginBottom:10,padding:"8px 12px",background:"var(--success-bg)",borderRadius:7}}>✅ Profile updated successfully.</p>}
+              {profileSaved && <p style={{color:"var(--success)",fontSize:13,marginBottom:10,padding:"8px 12px",background:"var(--success-bg)",borderRadius:7}}><CheckCircle size={16} style={{display:"inline", verticalAlign:"middle", marginRight:4}} /> Profile updated successfully.</p>}
               <button className="btn btn-gold" style={{width:"100%"}} onClick={saveProfile}>Save Profile</button>
             </div>
           </div>
@@ -962,7 +1021,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
                   style={{resize:"vertical",minHeight:50}}/>
               </div>
               {advanceErr && <p style={{color:"var(--danger)",fontSize:13,marginBottom:10,padding:"8px 12px",background:"var(--danger-bg)",borderRadius:7}}>{advanceErr}</p>}
-              {advanceSent && <p style={{color:"var(--success)",fontSize:13,marginBottom:10,padding:"8px 12px",background:"var(--success-bg)",borderRadius:7}}>✅ Advance request submitted successfully.</p>}
+              {advanceSent && <p style={{color:"var(--success)",fontSize:13,marginBottom:10,padding:"8px 12px",background:"var(--success-bg)",borderRadius:7}}><CheckCircle size={16} style={{display:"inline", verticalAlign:"middle", marginRight:4}} /> Advance request submitted successfully.</p>}
               <button className="btn btn-gold" style={{width:"100%"}} onClick={submitAdvance}>Submit Request</button>
             </div>
 
@@ -1042,83 +1101,91 @@ function OwnerDashboard({ onLogout }) {
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { load(); }, [load]);
 
-  const currentWeekStart = (() => {
+  const currentWeekStart = useMemo(() => {
     const d = new Date(); d.setDate(d.getDate() - d.getDay()); d.setHours(0,0,0,0); return d;
-  })();
-  const currentWeekEnd = new Date(currentWeekStart); currentWeekEnd.setDate(currentWeekStart.getDate() + 7);
-  const currentMonthStart = (() => {
+  }, []);
+  const currentWeekEnd = useMemo(() => { const d = new Date(currentWeekStart); d.setDate(currentWeekStart.getDate() + 7); return d; }, [currentWeekStart]);
+  const currentMonthStart = useMemo(() => {
     const d = new Date(); d.setDate(1); d.setHours(0,0,0,0); return d;
-  })();
-  const currentMonthEnd = new Date(currentMonthStart); currentMonthEnd.setMonth(currentMonthStart.getMonth() + 1);
+  }, []);
+  const currentMonthEnd = useMemo(() => { const d = new Date(currentMonthStart); d.setMonth(currentMonthStart.getMonth() + 1); return d; }, [currentMonthStart]);
   
-  const tsStart = new Date(); tsStart.setHours(0,0,0,0);
-  if (tsMode === "weekly") {
-    tsStart.setDate(tsStart.getDate() - tsStart.getDay() + tsOffset * 7);
-  } else {
-    tsStart.setDate(1);
-    tsStart.setMonth(tsStart.getMonth() + tsOffset);
-  }
-  const tsEnd = new Date(tsStart);
-  if (tsMode === "weekly") tsEnd.setDate(tsEnd.getDate() + 7);
-  else tsEnd.setMonth(tsEnd.getMonth() + 1);
+  const { tsStart, tsEnd } = useMemo(() => {
+    const start = new Date(); start.setHours(0,0,0,0);
+    if (tsMode === "weekly") {
+      start.setDate(start.getDate() - start.getDay() + tsOffset * 7);
+    } else {
+      start.setDate(1);
+      start.setMonth(start.getMonth() + tsOffset);
+    }
+    const end = new Date(start);
+    if (tsMode === "weekly") end.setDate(end.getDate() + 7);
+    else end.setMonth(end.getMonth() + 1);
+    return { tsStart: start, tsEnd: end };
+  }, [tsMode, tsOffset]);
 
-  const getTsLogs = (empId) => fLogs.filter(l => {
+  const { prStart, prEnd } = useMemo(() => {
+    const start = new Date(); start.setHours(0,0,0,0);
+    if (prMode === "weekly") {
+      start.setDate(start.getDate() - start.getDay() + prOffset * 7);
+    } else {
+      start.setDate(1);
+      start.setMonth(start.getMonth() + prOffset);
+    }
+    const end = new Date(start);
+    if (prMode === "weekly") end.setDate(end.getDate() + 7);
+    else end.setMonth(end.getMonth() + 1);
+    return { prStart: start, prEnd: end };
+  }, [prMode, prOffset]);
+
+  const fEmployees = useMemo(() => selectedBranch === "All" ? employees : employees.filter(e => e.branch === selectedBranch), [employees, selectedBranch]);
+  const fEmpIds = useMemo(() => new Set(fEmployees.map(e => e.id)), [fEmployees]);
+  const fLogs = useMemo(() => logs.filter(l => fEmpIds.has(l.employeeId)), [logs, fEmpIds]);
+  const fLeaves = useMemo(() => leaves.filter(l => fEmpIds.has(l.employeeId)), [leaves, fEmpIds]);
+  const fAdvances = useMemo(() => advances.filter(a => fEmpIds.has(a.employeeId)), [advances, fEmpIds]);
+  
+  const timesheetEmployees = useMemo(() => timesheetSearch.trim()
+    ? fEmployees.filter(emp => emp.name.toLowerCase().includes(timesheetSearch.trim().toLowerCase()))
+    : fEmployees, [fEmployees, timesheetSearch]);
+
+  const activeSessions = useMemo(() => fLogs.filter(l => !l.clockOut), [fLogs]);
+  const pendingLeaves = useMemo(() => fLeaves.filter(l => l.status === "pending"), [fLeaves]);
+  const approvedLeaves = useMemo(() => fLeaves.filter(l => l.status === "approved"), [fLeaves]);
+  const rejectedLeaves = useMemo(() => fLeaves.filter(l => l.status === "rejected"), [fLeaves]);
+  
+  const pendingAdvances = useMemo(() => fAdvances.filter(a => a.status === "pending"), [fAdvances]);
+  const paidAdvances = useMemo(() => fAdvances.filter(a => a.status === "paid"), [fAdvances]);
+  const rejectedAdvances = useMemo(() => fAdvances.filter(a => a.status === "rejected"), [fAdvances]);
+
+  const getTsLogs = useCallback((empId) => fLogs.filter(l => {
     const d = new Date(l.clockIn);
     return l.employeeId === empId && d >= tsStart && d < tsEnd;
-  });
+  }), [fLogs, tsStart, tsEnd]);
 
-  const prStart = new Date(); prStart.setHours(0,0,0,0);
-  if (prMode === "weekly") {
-    prStart.setDate(prStart.getDate() - prStart.getDay() + prOffset * 7);
-  } else {
-    prStart.setDate(1);
-    prStart.setMonth(prStart.getMonth() + prOffset);
-  }
-  const prEnd = new Date(prStart);
-  if (prMode === "weekly") prEnd.setDate(prEnd.getDate() + 7);
-  else prEnd.setMonth(prEnd.getMonth() + 1);
-
-  const getPrLogs = (empId) => fLogs.filter(l => {
+  const getPrLogs = useCallback((empId) => fLogs.filter(l => {
     const d = new Date(l.clockIn);
     return l.employeeId === empId && d >= prStart && d < prEnd;
-  });
+  }), [fLogs, prStart, prEnd]);
 
-  const currentWeekLogs = (empId) => fLogs.filter(l => {
+  const currentWeekLogs = useCallback((empId) => fLogs.filter(l => {
     const d = new Date(l.clockIn);
     return l.employeeId === empId && d >= currentWeekStart && d < currentWeekEnd;
-  });
+  }), [fLogs, currentWeekStart, currentWeekEnd]);
 
-  const currentMonthLogs = (empId) => fLogs.filter(l => {
+  const currentMonthLogs = useCallback((empId) => fLogs.filter(l => {
     const d = new Date(l.clockIn);
     return l.employeeId === empId && d >= currentMonthStart && d < currentMonthEnd;
-  });
+  }), [fLogs, currentMonthStart, currentMonthEnd]);
 
-  const getOverviewLogs = (empId) => overviewMode === "weekly" ? currentWeekLogs(empId) : currentMonthLogs(empId);
+  const getOverviewLogs = useCallback((empId) => overviewMode === "weekly" ? currentWeekLogs(empId) : currentMonthLogs(empId), [overviewMode, currentWeekLogs, currentMonthLogs]);
 
-  const fEmployees = selectedBranch === "All" ? employees : employees.filter(e => e.branch === selectedBranch);
-  const fEmpIds = new Set(fEmployees.map(e => e.id));
-  const fLogs = logs.filter(l => fEmpIds.has(l.employeeId));
-  const fLeaves = leaves.filter(l => fEmpIds.has(l.employeeId));
-  const fAdvances = advances.filter(a => fEmpIds.has(a.employeeId));
-  const timesheetEmployees = timesheetSearch.trim()
-    ? fEmployees.filter(emp => emp.name.toLowerCase().includes(timesheetSearch.trim().toLowerCase()))
-    : fEmployees;
-
-  const getPrAdvances = (empId) => fAdvances.filter(a => {
+  const getPrAdvances = useCallback((empId) => fAdvances.filter(a => {
     const d = new Date(a.paidAt || a.appliedAt);
     return a.employeeId === empId && a.status === "paid" && d >= prStart && d < prEnd;
-  });
-
-  const activeSessions = fLogs.filter(l => !l.clockOut);
-  const pendingLeaves = fLeaves.filter(l => l.status === "pending");
-  const approvedLeaves = fLeaves.filter(l => l.status === "approved");
-  const rejectedLeaves = fLeaves.filter(l => l.status === "rejected");
-  
-  const pendingAdvances = fAdvances.filter(a => a.status === "pending");
-  const paidAdvances = fAdvances.filter(a => a.status === "paid");
-  const rejectedAdvances = fAdvances.filter(a => a.status === "rejected");
+  }), [fAdvances, prStart, prEnd]);
 
   const deleteLog = async (id) => {
+    if (!window.confirm("Are you sure you want to delete this timesheet record?")) return;
     const n = logs.filter(l => l.id !== id);
     await storage.set("timelogs", n); setLogs(n);
   };
@@ -1314,14 +1381,13 @@ function OwnerDashboard({ onLogout }) {
   const totalPrHrs = prEmployees.reduce((s,emp) => s + totalHours(getPrLogs(emp.id).filter(l=>l.clockOut)), 0);
 
   const tabs = [
-    {id:"overview",  label:"Overview",   icon:"⭕"},
-    {id:"live",      label:"Live Clock",  icon:"⏱"},
-    {id:"timesheet", label:"Timesheets",  icon:"📋"},
-    {id:"payroll",   label:"Payroll",     icon:"₹"},
-    {id:"leaves",    label:"Leaves",      icon:"📅", badge: pendingLeaves.length},
-    {id:"advances",  label:"Advances",    icon:"💸", badge: pendingAdvances.length},
-    {id:"employees", label:"Staff",       icon:"👥"},
-    {id:"settings",  label:"Settings",    icon:"⚙️"},
+    {id:"overview",  label:"Overview",   icon:<LayoutDashboard size={14} />},
+    {id:"live",      label:"Live Clock",  icon:<Timer size={14} />},
+    {id:"timesheet", label:"Timesheets",  icon:<ClipboardList size={14} />},
+    {id:"payroll",   label:"Payroll",     icon:<IndianRupee size={14} />},
+    {id:"requests",  label:"Requests",    icon:<Inbox size={14} />, badge: pendingLeaves.length + pendingAdvances.length},
+    {id:"employees", label:"Staff",       icon:<Users size={14} />},
+    {id:"settings",  label:"Settings",    icon:<Settings size={14} />},
   ];
 
   if (loading) return (
@@ -1342,9 +1408,9 @@ function OwnerDashboard({ onLogout }) {
         borderBottom:"1px solid var(--border)",
         display:"flex",alignItems:"center",justifyContent:"space-between",
         padding:"13px 20px",
-        flexWrap:"wrap",gap:"12px"
+        gap:"12px", overflowX:"auto", scrollbarWidth:"none", WebkitOverflowScrolling:"touch"
       }}>
-        <div style={{display:"flex",alignItems:"center",gap:11,minWidth:"fit-content"}}>
+        <div style={{display:"flex",alignItems:"center",gap:11,flexShrink:0}}>
           <div style={{
             width:36,height:36,minWidth:36,minHeight:36,flexShrink:0,borderRadius:"50%",
             display:"flex",alignItems:"center",justifyContent:"center",
@@ -1357,7 +1423,7 @@ function OwnerDashboard({ onLogout }) {
             <p style={{fontSize:11,color:"var(--muted)",letterSpacing:"0.1em",whiteSpace:"nowrap"}}>OWNER DASHBOARD</p>
           </div>
         </div>
-        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",justifyContent:"flex-end",flex:"1 1 auto"}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
           <select className="input" style={{width:"auto", padding:"4px 10px", marginBottom:0, background:"var(--card-2)", border:"1px solid var(--border)", color:"var(--gold)", fontSize:13}} value={selectedBranch} onChange={e => setSelectedBranch(e.target.value)}>
             <option value="All">All Branches</option>
             {settings.branches?.map(b => <option key={b} value={b}>{b}</option>)}
@@ -1370,7 +1436,7 @@ function OwnerDashboard({ onLogout }) {
           )}
           {pendingLeaves.length > 0 && (
             <div style={{background:"var(--amber-bg)",border:"1px solid rgba(245,158,11,.2)",borderRadius:20,padding:"4px 10px",whiteSpace:"nowrap"}}>
-              <span style={{fontSize:12,color:"var(--amber)",fontWeight:500}}>⚑ {pendingLeaves.length} pending</span>
+              <span style={{fontSize:12,color:"var(--amber)",fontWeight:500}}><Flag size={12} style={{verticalAlign:"middle", marginTop:"-2px"}}/> {pendingLeaves.length} pending</span>
             </div>
           )}
           <button className="btn btn-outline btn-sm" style={{flexShrink:0}} onClick={onLogout}>Sign Out</button>
@@ -1415,16 +1481,16 @@ function OwnerDashboard({ onLogout }) {
           <div className="fade-up">
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(145px,1fr))",gap:12,marginBottom:20}}>
               {[
-                {label:"Total Staff", value:fEmployees.length, icon:"👥", color:"var(--accent)"},
-                {label:"Active Now",  value:activeSessions.length, icon:"⏱", color:"var(--success)"},
-                {label:"Pending Leaves", value:pendingLeaves.length, icon:"📅", color:"var(--amber)"},
-                {label:"Advances Req.", value:pendingAdvances.length, icon:"💸", color:"var(--amber)"},
+                {label:"Total Staff", value:fEmployees.length, icon:<Users size={14} />, color:"var(--accent)"},
+                {label:"Active Now",  value:activeSessions.length, icon:<Timer size={14} />, color:"var(--success)"},
+                {label:"Pending Leaves", value:pendingLeaves.length, icon:<Calendar size={14} />, color:"var(--amber)"},
+                {label:"Advances Req.", value:pendingAdvances.length, icon:<IndianRupee size={14} />, color:"var(--amber)"},
               ].map(s => (
                 <div key={s.label} className="card" style={{position:"relative",overflow:"hidden"}}>
-                  <div style={{fontSize:20,marginBottom:8,opacity:.7}}>{s.icon}</div>
+                  <div style={{color:s.color, marginBottom:8}}>{s.icon}</div>
                   <div style={{fontSize:26,fontWeight:700,color:s.color,fontFamily:"'Playfair Display',serif",marginBottom:2}}>{s.value}</div>
                   <div style={{fontSize:12,color:"var(--muted)",fontWeight:500}}>{s.label}</div>
-                  <div style={{position:"absolute",bottom:-10,right:-10,fontSize:48,opacity:.04}}>{s.icon}</div>
+                  <div style={{position:"absolute",bottom:-10,right:-10,opacity:.04, transform:"scale(3)"}}>{s.icon}</div>
                 </div>
               ))}
             </div>
@@ -1480,7 +1546,7 @@ function OwnerDashboard({ onLogout }) {
                         display:"flex",alignItems:"center",justifyContent:"center",
                         fontSize:18
                       }}>
-                        {sess ? <span className="live-dot" style={{width:10,height:10}}/> : "👤"}
+                        {sess ? <span className="live-dot" style={{width:10,height:10}}/> : <User size={18} />}
                       </div>
                       <div style={{textAlign: "left"}}>
                         <p style={{fontWeight:600,fontSize:14}}>{emp.name}</p>
@@ -1608,13 +1674,13 @@ function OwnerDashboard({ onLogout }) {
                 </div>
               </div>
               <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                <button className="btn btn-outline btn-sm" onClick={() => setTsOffset(p=>p-1)}>← Prev</button>
+                <button className="btn btn-outline btn-sm" onClick={() => setTsOffset(p=>p-1)}><ChevronLeft size={14}/> Prev</button>
                 <span style={{fontSize:13,color:"var(--muted)",background:"var(--card)",border:"1px solid var(--border)",padding:"6px 12px",borderRadius:8}}>
                   {tsStart.toLocaleDateString("en-GB",{day:"numeric",month:"short"})} – {new Date(tsEnd-1).toLocaleDateString("en-GB",{day:"numeric",month:"short"})}
                 </span>
-                <button className="btn btn-outline btn-sm" onClick={() => setTsOffset(p=>p+1)} disabled={tsOffset===0}>Next →</button>
+                <button className="btn btn-outline btn-sm" onClick={() => setTsOffset(p=>p+1)} disabled={tsOffset===0}>Next <ChevronRight size={14}/></button>
               </div>
-              <button className="btn btn-gold btn-sm" onClick={exportTimesheetsCSV}>⬇ Export {tsMode==="weekly" ? "Week" : "Month"} CSV</button>
+              <button className="btn btn-gold btn-sm" onClick={exportTimesheetsCSV}><Download size={14}/> Export {tsMode==="weekly" ? "Week" : "Month"} CSV</button>
             </div>
 
             <div style={{marginBottom:16}}>
@@ -1660,7 +1726,7 @@ function OwnerDashboard({ onLogout }) {
                         <span style={{color:"var(--muted)"}}>{fmtDate(l.clockIn)}</span>
                         <span>{fmt(l.clockIn)} → {l.clockOut ? fmt(l.clockOut) : <span style={{color:"var(--success)"}}>Active</span>}</span>
                         <span style={{color:"var(--gold)"}}>{l.clockOut ? `${hoursWorked(l.clockIn,l.clockOut,l.breaks).toFixed(1)}h` : "—"}</span>
-                        <button className="btn btn-danger btn-xs" onClick={() => deleteLog(l.id)}>✕</button>
+                        <button className="btn btn-danger btn-xs" onClick={() => deleteLog(l.id)}><X size={12}/></button>
                       </div>
                     ))
                   }
@@ -1682,13 +1748,13 @@ function OwnerDashboard({ onLogout }) {
                 </div>
               </div>
               <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                <button className="btn btn-outline btn-sm" onClick={() => setPrOffset(p=>p-1)}>← Prev</button>
+                <button className="btn btn-outline btn-sm" onClick={() => setPrOffset(p=>p-1)}><ChevronLeft size={14}/> Prev</button>
                 <span style={{fontSize:13,color:"var(--muted)",background:"var(--card)",border:"1px solid var(--border)",padding:"6px 12px",borderRadius:8}}>
                   {prStart.toLocaleDateString("en-GB",{day:"numeric",month:"short"})} – {new Date(prEnd-1).toLocaleDateString("en-GB",{day:"numeric",month:"short"})}
                 </span>
-                <button className="btn btn-outline btn-sm" onClick={() => setPrOffset(p=>p+1)} disabled={prOffset===0}>Next →</button>
+                <button className="btn btn-outline btn-sm" onClick={() => setPrOffset(p=>p+1)} disabled={prOffset===0}>Next <ChevronRight size={14}/></button>
               </div>
-              <button className="btn btn-gold btn-sm" onClick={exportPayrollCSV}>⬇ Export {prMode==="weekly" ? "Week" : "Month"} CSV</button>
+              <button className="btn btn-gold btn-sm" onClick={exportPayrollCSV}><Download size={14}/> Export {prMode==="weekly" ? "Week" : "Month"} CSV</button>
             </div>
 
             <div style={{marginBottom:16}}>
@@ -1745,16 +1811,16 @@ function OwnerDashboard({ onLogout }) {
           </div>
         )}
 
-        {/* ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ LEAVES ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ */}
-        {tab === "leaves" && (
+        {/* ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ REQUESTS ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ */}
+        {tab === "requests" && (
           <div className="fade-up">
-            <h3 style={{fontSize:20,marginBottom:20}}>Leave Requests</h3>
+            <h3 style={{fontSize:20,marginBottom:20,textAlign:"left"}}>Leave Requests</h3>
 
             {/* Pending */}
             {pendingLeaves.length > 0 && (
               <div style={{marginBottom:28}}>
                 <p style={{fontSize:12,color:"var(--amber)",textTransform:"uppercase",letterSpacing:".1em",fontWeight:500,marginBottom:12}}>
-                  ⏳ Pending Approval ({pendingLeaves.length})
+                  <Clock size={14} style={{verticalAlign:"middle", marginTop:"-2px"}}/> Pending Approval ({pendingLeaves.length})
                 </p>
                 {pendingLeaves.map(l => (
                   <div key={l.id} style={{
@@ -1774,8 +1840,8 @@ function OwnerDashboard({ onLogout }) {
                       <span className="tag tag-amber">{l.type}</span>
                     </div>
                     <div style={{display:"flex",gap:8}}>
-                      <button className="btn btn-success btn-sm" style={{flex:1}} onClick={() => approveLeave(l.id)}>✓ Approve</button>
-                      <button className="btn btn-danger btn-sm" style={{flex:1}} onClick={() => rejectLeave(l.id)}>✕ Reject</button>
+                      <button className="btn btn-success btn-sm" style={{flex:1}} onClick={() => approveLeave(l.id)}><Check size={14}/> Approve</button>
+                      <button className="btn btn-danger btn-sm" style={{flex:1}} onClick={() => rejectLeave(l.id)}><X size={14}/> Reject</button>
                     </div>
                   </div>
                 ))}
@@ -1786,7 +1852,7 @@ function OwnerDashboard({ onLogout }) {
             {approvedLeaves.length > 0 && (
               <div style={{marginBottom:28}}>
                 <p style={{fontSize:12,color:"var(--success)",textTransform:"uppercase",letterSpacing:".1em",fontWeight:500,marginBottom:12}}>
-                  ✓ Approved Leaves ({approvedLeaves.length})
+                  <Check size={14}/> Approved Leaves ({approvedLeaves.length})
                   </p>
                 {[...approvedLeaves].reverse().map(l => (
                   <div key={l.id} className="card" style={{marginBottom:10,display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:10}}>
@@ -1811,7 +1877,7 @@ function OwnerDashboard({ onLogout }) {
             {rejectedLeaves.length > 0 && (
               <div style={{marginBottom:28}}>
                 <p style={{fontSize:12,color:"var(--danger)",textTransform:"uppercase",letterSpacing:".1em",fontWeight:500,marginBottom:12}}>
-                  ✕ Declined Leaves ({rejectedLeaves.length})
+                  <X size={14} style={{verticalAlign:"middle", marginTop:"-2px"}}/> Declined Leaves ({rejectedLeaves.length})
                 </p>
                 {[...rejectedLeaves].reverse().map(l => (
                   <div key={l.id} className="card" style={{marginBottom:10,display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:10}}>
@@ -1833,24 +1899,19 @@ function OwnerDashboard({ onLogout }) {
             )}
 
             {pendingLeaves.length === 0 && approvedLeaves.length === 0 && rejectedLeaves.length === 0 && (
-              <div className="card" style={{textAlign:"center",padding:"32px",color:"var(--muted)",fontSize:13}}>No leave requests yet.</div>
+              <div className="card" style={{textAlign:"center",padding:"32px",color:"var(--muted)",fontSize:13,marginBottom:28}}>No leave requests yet.</div>
             )}
-          </div>
-        )}
 
-        {/* ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ ADVANCES ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ */}
-        {tab === "advances" && (
-          <div className="fade-up">
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-              <h3 style={{fontSize:20,marginBottom:0}}>Salary Advances</h3>
-              <button className="btn btn-gold btn-sm" onClick={exportAdvancesCSV}>⬇ Export CSV</button>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20,borderTop:"1px solid var(--border)",paddingTop:28}}>
+              <h3 style={{fontSize:20,marginBottom:0,textAlign:"left"}}>Salary Advances</h3>
+              <button className="btn btn-gold btn-sm" onClick={exportAdvancesCSV}><Download size={14}/> Export CSV</button>
             </div>
 
             {/* Pending */}
             {pendingAdvances.length > 0 && (
               <div style={{marginBottom:28}}>
                 <p style={{fontSize:12,color:"var(--amber)",textTransform:"uppercase",letterSpacing:".1em",fontWeight:500,marginBottom:12}}>
-                  ⏳ Pending Advance Requests ({pendingAdvances.length})
+                  <Clock size={14} style={{verticalAlign:"middle", marginTop:"-2px"}}/> Pending Advance Requests ({pendingAdvances.length})
                 </p>
                 {pendingAdvances.map(a => (
                   <div key={a.id} style={{
@@ -1865,8 +1926,8 @@ function OwnerDashboard({ onLogout }) {
                       <p style={{fontSize:11,color:"var(--text-2)",marginTop:4}}>Requested {fmtDate(a.appliedAt)}</p>
                     </div>
                     <div style={{display:"flex",gap:8,flexDirection:"column"}}>
-                      <button className="btn btn-success btn-sm" onClick={() => markAdvancePaid(a.id)}>✓ Mark Paid</button>
-                      <button className="btn btn-danger btn-sm" onClick={() => rejectAdvance(a.id)}>✕ Reject</button>
+                      <button className="btn btn-success btn-sm" onClick={() => markAdvancePaid(a.id)}><Check size={14}/> Mark Paid</button>
+                      <button className="btn btn-danger btn-sm" onClick={() => rejectAdvance(a.id)}><X size={14}/> Reject</button>
                     </div>
                   </div>
                 ))}
@@ -1876,7 +1937,7 @@ function OwnerDashboard({ onLogout }) {
             {/* Paid */}
             {paidAdvances.length > 0 && (
               <div style={{marginBottom:28}}>
-                <p style={{fontSize:12,color:"var(--success)",textTransform:"uppercase",letterSpacing:".1em",fontWeight:500,marginBottom:12}}>✓ Paid Advances ({paidAdvances.length})</p>
+                <p style={{fontSize:12,color:"var(--success)",textTransform:"uppercase",letterSpacing:".1em",fontWeight:500,marginBottom:12}}><Check size={14} style={{verticalAlign:"middle", marginTop:"-2px"}}/> Paid Advances ({paidAdvances.length})</p>
                 {[...paidAdvances].reverse().map(a => (
                   <div key={a.id} className="card" style={{marginBottom:10,display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:10}}>
                     <div>
@@ -1892,7 +1953,7 @@ function OwnerDashboard({ onLogout }) {
             {/* Rejected */}
             {rejectedAdvances.length > 0 && (
               <div style={{marginBottom:28}}>
-                <p style={{fontSize:12,color:"var(--danger)",textTransform:"uppercase",letterSpacing:".1em",fontWeight:500,marginBottom:12}}>✕ Rejected Advances ({rejectedAdvances.length})</p>
+                <p style={{fontSize:12,color:"var(--danger)",textTransform:"uppercase",letterSpacing:".1em",fontWeight:500,marginBottom:12}}><X size={14}/> Rejected Advances ({rejectedAdvances.length})</p>
                 {[...rejectedAdvances].reverse().map(a => (
                   <div key={a.id} className="card" style={{marginBottom:10,display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:10}}>
                     <div>
@@ -1944,14 +2005,14 @@ function OwnerDashboard({ onLogout }) {
                       <div style={{display:"flex", gap:8, width:"100%"}}>
                         <input type="text" className="input" value={editBranchValue} onChange={e => setEditBranchValue(e.target.value)} style={{padding:"4px 8px", minHeight:32, marginBottom:0}} />
                         <button className="btn btn-success btn-sm" style={{padding:"4px 10px"}} onClick={() => saveEditBranch(b)}>✓</button>
-                        <button className="btn btn-ghost btn-sm" style={{padding:"4px 10px"}} onClick={() => setEditingBranch(null)}>✕</button>
+                        <button className="btn btn-ghost btn-sm" style={{padding:"4px 10px"}} onClick={() => setEditingBranch(null)}><X size={12}/></button>
                       </div>
                     ) : (
                       <>
                         <span style={{fontSize:14, fontWeight:500}}>{b}</span>
                         <div style={{display:"flex", gap:4}}>
-                          <button className="btn btn-ghost btn-sm" style={{padding:"4px 8px"}} onClick={() => { setEditingBranch(b); setEditBranchValue(b); }}>✎</button>
-                          <button className="btn btn-danger btn-sm" style={{padding:"4px 8px"}} onClick={() => deleteBranch(b)}>🗑</button>
+                          <button className="btn btn-ghost btn-sm" style={{padding:"4px 8px"}} onClick={() => { setEditingBranch(b); setEditBranchValue(b); }}><Edit2 size={12}/></button>
+                          <button className="btn btn-danger btn-sm" style={{padding:"4px 8px"}} onClick={() => deleteBranch(b)}><Trash2 size={12}/></button>
                         </div>
                       </>
                     )}
@@ -2033,7 +2094,7 @@ function OwnerDashboard({ onLogout }) {
                     background: "transparent", border: "none", color: "var(--muted)", cursor: "pointer", fontSize: 16, padding: 0
                   }}
                 >
-                  {showNewPass ? "🙈" : "👁️"}
+                  {showNewPass ? <EyeOff size={16}/> : <Eye size={16}/>}
                 </button>
               </div>
               <p style={{
@@ -2143,7 +2204,7 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20, flexWrap: "wrap", gap: "10px"}}>
         <h3 style={{fontSize:20}}>Staff Members ({fEmployees.length})</h3>
         <button className="btn btn-gold btn-sm" onClick={() => { setConfirmRemoveId(null); setAdding(p=>!p); if(adding) { setEditingId(null); setForm({name:"",pin:"",employmentType:"Full-time",standardHours:"10",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly", phone:"", email:"", gender:"", address:""}); }}}>
-          {adding ? "✕ Cancel" : "+ Add Staff"}
+          {adding ? "<X size={14}/> Cancel" : "+ Add Staff"}
         </button>
       </div>
 
@@ -2238,16 +2299,16 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
                 width:38,height:38,borderRadius:11,background:"var(--card-2)",
                 border:"1px solid var(--border-2)",display:"flex",alignItems:"center",
                 justifyContent:"center",fontSize:16, overflow:"hidden"
-              }}>👤</div>
+              }}><User size={20} /></div>
               <div>
                 <div style={{fontWeight:600}}>{emp.name}</div>
                 <div style={{fontSize:12,color:"var(--muted)"}}>{emp.role} {emp.branch ? `· ${emp.branch}` : ""} · {emp.employmentType || "Full-time"} · {emp.paymentCycle || "Weekly"} · PIN: {emp.pin} · ₹{emp.dailySalary||0}/day (₹{emp.hourlyRate||0}/hr)</div>
                 {(emp.phone || emp.email || emp.gender || emp.address) && (
                   <div style={{fontSize:11,color:"var(--text-2)",marginTop:4,display:"flex",gap:10,flexWrap:"wrap"}}>
-                    {emp.phone && <span>📞 {emp.phone}</span>}
-                    {emp.email && <span>✉️ {emp.email}</span>}
-                    {emp.gender && emp.gender !== "Select Gender" && <span>⚧ {emp.gender}</span>}
-                    {emp.address && <span>📍 {emp.address}</span>}
+                    {emp.phone && <span><Phone size={12}/> {emp.phone}</span>}
+                    {emp.email && <span><Mail size={12}/> {emp.email}</span>}
+                    {emp.gender && emp.gender !== "Select Gender" && <span><Users size={12}/> {emp.gender}</span>}
+                    {emp.address && <span><MapPin size={12}/> {emp.address}</span>}
                   </div>
                 )}
               </div>
