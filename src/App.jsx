@@ -836,7 +836,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
               {active && (
                 <div style={{marginBottom:18}}>
                   <p style={{color:"var(--muted)",fontSize:12,marginBottom:4}}>
-                    Shift started at <strong style={{color:"var(--text-2)"}}>{fmt(active.clockIn)}</strong>
+                    Shift started <strong style={{color:"var(--text-2)"}}>{fmtDate(active.clockIn)} {fmt(active.clockIn)}</strong>
                   </p>
                   <p style={{fontSize:30,color:"var(--success)",fontWeight:600,fontFamily:"'Playfair Display',serif",letterSpacing:"0.05em"}}>
                     {elapsedStr}
@@ -1251,6 +1251,14 @@ function OwnerDashboard({ onLogout }) {
     setLogs(updatedLogs);
   };
 
+  const clockOutSingle = async (id, name) => {
+    if (!window.confirm(`Are you sure you want to clock out ${name}?`)) return;
+    const nowIso = new Date().toISOString();
+    const updatedLogs = logs.map(l => l.id === id ? { ...l, clockOut: nowIso } : l);
+    await storage.set("timelogs", updatedLogs);
+    setLogs(updatedLogs);
+  };
+
   const updateSettings = async (newSt) => {
     const updated = { ...settings, ...newSt };
     setSettings(updated);
@@ -1633,7 +1641,7 @@ function OwnerDashboard({ onLogout }) {
                       {sess && <span style={{fontSize:13,fontFamily:"'Playfair Display',serif",color:"var(--success)",fontWeight:600}}>{eStr}</span>}
                       <span style={{fontSize:12,color:"var(--muted)"}}>{wh.toFixed(1)} hrs/wk</span>
                       {sess
-                        ? <span className="tag tag-green">● Clocked In {fmt(sess.clockIn)}</span>
+                      ? <span className="tag tag-green">● In: {fmtDate(sess.clockIn)} {fmt(sess.clockIn)}</span>
                         : <span className="tag tag-muted">○ Off</span>}
                     </div>
                   </div>
@@ -1701,12 +1709,15 @@ function OwnerDashboard({ onLogout }) {
                       </div>
                       <div style={{textAlign: "left"}}>
                         <p style={{fontWeight:600}}>{sess.name}</p>
-                        <p style={{fontSize:12,color:"var(--muted)"}}>{emp?.role} {emp?.branch ? `· ${emp.branch}` : ""} · {emp?.employmentType || "Full-time"} · Clocked in at <strong style={{color:"var(--text-2)"}}>{fmt(sess.clockIn)}</strong></p>
+                        <p style={{fontSize:12,color:"var(--muted)"}}>{emp?.role} {emp?.branch ? `· ${emp.branch}` : ""} · {emp?.employmentType || "Full-time"} · Clocked in <strong style={{color:"var(--text-2)"}}>{fmtDate(sess.clockIn)} {fmt(sess.clockIn)}</strong></p>
                       </div>
                     </div>
                     <div style={{textAlign:"right"}}>
                       <div style={{fontSize:26,fontFamily:"'Playfair Display',serif",color:"var(--success)",fontWeight:600,letterSpacing:"0.05em"}}>{eStr}</div>
-                      <div style={{fontSize:12,color:"var(--muted)"}}>₹{((hrs) * (emp?.hourlyRate || 0)).toFixed(2)} earned</div>
+                      <div style={{fontSize:12,color:"var(--muted)", marginBottom: 8}}>₹{((hrs) * (emp?.hourlyRate || 0)).toFixed(2)} earned</div>
+                      <button className="btn btn-outline btn-xs" onClick={() => clockOutSingle(sess.id, sess.name)}>
+                        <StopCircle size={12} style={{marginRight: 2}}/> Clock Out
+                      </button>
                     </div>
                   </div>
                 );
