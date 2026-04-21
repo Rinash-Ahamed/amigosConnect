@@ -87,7 +87,7 @@ const fmtDate = (iso) => {
   if (!iso) return "—";
   return new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 };
-const hoursWorked = (clockIn, clockOut, breaks = []) => {
+const hoursWorked = (clockIn, clockOut) => {
   if (!clockIn || !clockOut) return 0;
   let totalMs = new Date(clockOut) - new Date(clockIn);
   return Math.max(0, Math.round((totalMs / 3600000) * 100) / 100);
@@ -95,6 +95,17 @@ const hoursWorked = (clockIn, clockOut, breaks = []) => {
 const totalHours = (logs) =>
   logs.reduce((s, l) => s + hoursWorked(l.clockIn, l.clockOut, l.breaks), 0);
 const uid = () => Math.random().toString(36).slice(2, 10);
+const csvCell = (value) => {
+  const text = value === undefined || value === null || value === "" ? "-" : String(value);
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+};
+const downloadCSV = (filename, rows) => {
+  const csv = rows.map(row => row.map(csvCell).join(",")).join("\n");
+  const link = document.createElement("a");
+  link.href = "data:text/csv;charset=utf-8," + encodeURIComponent(csv);
+  link.download = filename;
+  link.click();
+};
 const ownerPasswordIssues = (password) => {
   const pwd = password.trim();
   const issues = [];
@@ -1338,7 +1349,7 @@ function OwnerDashboard({ onLogout }) {
       payroll.overtimeHours.toFixed(2), 
       payroll.deficitHours.toFixed(2),
       payroll.totalHours.toFixed(2), 
-      emp.hourlyRate || 0, // Removed ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹ for better CSV compatibility
+      emp.hourlyRate || 0, // Removed ₹ for better CSV compatibility
       gross.toFixed(2), 
       advance.toFixed(2), 
       net.toFixed(2)
@@ -1373,6 +1384,50 @@ function OwnerDashboard({ onLogout }) {
     const timestamp = new Date().toISOString().slice(0,19).replace(/:/g, "-");
     link.download = `advances-${timestamp}.csv`; 
     link.click();
+  };
+
+  const exportStaffCSV = () => {
+    const rows = [[
+      "Employee ID",
+      "Full Name",
+      "PIN",
+      "Branch",
+      "Role",
+      "Employment Type",
+      "Payment Cycle",
+      "Standard Hours/Day",
+      "Daily Salary",
+      "Hourly Rate",
+      "Phone",
+      "Email",
+      "Gender",
+      "Address"
+    ]];
+
+    employees
+      .slice()
+      .sort((a, b) => (a.branch || "").localeCompare(b.branch || "") || (a.name || "").localeCompare(b.name || ""))
+      .forEach(emp => {
+        rows.push([
+          emp.id,
+          emp.name,
+          emp.pin,
+          emp.branch,
+          emp.role,
+          emp.employmentType || "Full-time",
+          emp.paymentCycle || "Weekly",
+          emp.standardHours || 10,
+          emp.dailySalary || 0,
+          emp.hourlyRate || 0,
+          emp.phone,
+          emp.email,
+          emp.gender,
+          emp.address
+        ]);
+      });
+
+    const timestamp = new Date().toISOString().slice(0,19).replace(/:/g, "-");
+    downloadCSV(`staff-info-${timestamp}.csv`, rows);
   };
 
   const totalPrGross = prEmployees.reduce((s,emp) => s + calculatePayrollDetails(getPrLogs(emp.id).filter(l=>l.clockOut), emp).grossPay, 0);
@@ -1476,7 +1531,7 @@ function OwnerDashboard({ onLogout }) {
 
       <div style={{padding:20,maxWidth:860,margin:"0 auto"}}>
 
-        {/* ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ OVERVIEW ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ */}
+        {/* ── OVERVIEW ── */}
         {tab === "overview" && (
           <div className="fade-up">
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(145px,1fr))",gap:12,marginBottom:20}}>
@@ -1567,7 +1622,7 @@ function OwnerDashboard({ onLogout }) {
           </div>
         )}
 
-        {/* ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ LIVE CLOCK ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ */}
+        {/* ── LIVE CLOCK ── */}
         {tab === "live" && (
           <div className="fade-up">
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20,flexWrap:"wrap",gap:12}}>
@@ -1662,7 +1717,7 @@ function OwnerDashboard({ onLogout }) {
           </div>
         )}
 
-        {/* ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ TIMESHEETS ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ */}
+        {/* ── TIMESHEETS ── */}
         {tab === "timesheet" && (
           <div className="fade-up">
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16,flexWrap:"wrap",gap:10}}>
@@ -1736,7 +1791,7 @@ function OwnerDashboard({ onLogout }) {
           </div>
         )}
 
-        {/* ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ PAYROLL ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ */}
+        {/* ── PAYROLL ── */}
         {tab === "payroll" && (
           <div className="fade-up">
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16,flexWrap:"wrap",gap:10}}>
@@ -1811,7 +1866,7 @@ function OwnerDashboard({ onLogout }) {
           </div>
         )}
 
-        {/* ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ REQUESTS ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ */}
+        {/* ── REQUESTS ── */}
         {tab === "requests" && (
           <div className="fade-up">
             <h3 style={{fontSize:20,marginBottom:20,textAlign:"left"}}>Leave Requests</h3>
@@ -1971,10 +2026,10 @@ function OwnerDashboard({ onLogout }) {
           </div>
         )}
 
-        {/* ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ STAFF / EMPLOYEES ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ */}
+        {/* ── STAFF / EMPLOYEES ── */}
         {tab === "employees" && <EmployeeManager employees={employees} setEmployees={setEmployees} selectedBranch={selectedBranch} branches={settings.branches} />}
 
-        {/* ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ SETTINGS ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ */}
+        {/* ── SETTINGS ── */}
         {tab === "settings" && (
           <div className="fade-up" style={{ maxWidth: 400, margin: "0 auto" }}>
             <h3 style={{fontSize:20,marginBottom:20,textAlign:"center"}}>App Settings</h3>
@@ -2072,6 +2127,21 @@ function OwnerDashboard({ onLogout }) {
               </div>
             </div>
 
+            <div className="card" style={{marginBottom: 20}}>
+              <h4 style={{fontSize:16, marginBottom:6}}>Staff Export</h4>
+              <p style={{color:"var(--muted)", fontSize:13, marginBottom:16}}>
+                Download a CSV file with every staff profile, including PIN, branch, payroll, and contact details.
+              </p>
+              <button
+                className="btn btn-gold"
+                style={{width: "100%"}}
+                disabled={employees.length === 0}
+                onClick={exportStaffCSV}
+              >
+                <Download size={14}/> Export All Staff CSV
+              </button>
+            </div>
+
             <div className="card">
               <h4 style={{fontSize:16, marginBottom:6}}>Change Owner Password</h4>
               <p style={{color:"var(--muted)", fontSize:13, marginBottom:16}}>Update the master password used to access the Owner Dashboard.</p>
@@ -2131,7 +2201,7 @@ function OwnerDashboard({ onLogout }) {
   );
 }
 
-// ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Employee Manager ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
+// ── Employee Manager ──────────────────────────────────────────────────────────
 function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [] }) {
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState(null);
