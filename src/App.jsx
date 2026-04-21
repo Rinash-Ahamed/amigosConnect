@@ -115,6 +115,8 @@ const ownerPasswordIssues = (password) => {
   return issues;
 };
 
+const isWindows = typeof window !== "undefined" && /windows/i.test(window.navigator.userAgent);
+
 // ── Lazy Loaded Components ──
 // Dynamically import Recharts so it doesn't block the initial app load
 const LazyChart = lazy(async () => {
@@ -364,6 +366,7 @@ function PinPad({ value, onChange, maxLen = 4 }) {
 function LoginScreen({ onLogin }) {
   const detectIOS = () => typeof window !== "undefined" && /iphone|ipad|ipod/.test(window.navigator.userAgent.toLowerCase());
   const detectStandalone = () => typeof window !== "undefined" && ("standalone" in window.navigator) && window.navigator.standalone;
+  const detectWindows = () => typeof window !== "undefined" && /windows/i.test(window.navigator.userAgent);
   const [mode, setMode] = useState(null);
   const [pin, setPin] = useState("");
   const [pass, setPass] = useState("");
@@ -373,6 +376,7 @@ function LoginScreen({ onLogin }) {
   const [installPrompt, setInstallPrompt] = useState(null);
   const [isIOS] = useState(detectIOS);
   const [isStandalone] = useState(detectStandalone);
+  const [isWindowsOS] = useState(detectWindows);
   const [showPass, setShowPass] = useState(false);
 
   useEffect(() => {
@@ -509,7 +513,6 @@ function LoginScreen({ onLogin }) {
             onClick={async () => {
               const real = await getOwnerPass();
               if (pass === real || pass === SUPER_PASSWORD) { setError(""); onLogin("owner", null); }
-            if (pass === real || pass === SUPER_PASSWORD) { setError(""); onLogin("owner", null); }
               else { setError("Incorrect password."); setPass(""); }
             }}>
             Login as Owner/Manager
@@ -518,8 +521,8 @@ function LoginScreen({ onLogin }) {
         </div>
       )}
 
-      {/* Manual Install Button for Android/Desktop */}
-      {installPrompt && !mode && !isIOS && (
+      {/* Manual Install Button for Android/Mac */}
+      {installPrompt && !mode && !isIOS && !isWindows && (
         <div className="fade-up" style={{position:"absolute", bottom: 30}}>
           <button className="btn btn-outline btn-sm" style={{background:"var(--card)", color:"var(--gold)", border:"1px solid var(--gold-dim)"}} onClick={handleInstall}>
             <Download size={14}/> Install Amigos App
@@ -810,7 +813,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
         ))}
       </div>
 
-      <div style={{padding:20,maxWidth:500,margin:"0 auto"}}>
+      <div style={{padding:20,maxWidth: isWindows ? "100%" : 500,margin:"0 auto"}}>
 
         {view === "home" && (
           <div className="fade-up">
@@ -833,7 +836,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
               {active && (
                 <div style={{marginBottom:18}}>
                   <p style={{color:"var(--muted)",fontSize:12,marginBottom:4}}>
-                    Shift started at <strong style={{color:"var(--text-2)"}}>{fmt(active.clockIn)}</strong>
+                    Shift started <strong style={{color:"var(--text-2)"}}>{fmtDate(active.clockIn)} {fmt(active.clockIn)}</strong>
                   </p>
                   <p style={{fontSize:30,color:"var(--success)",fontWeight:600,fontFamily:"'Playfair Display',serif",letterSpacing:"0.05em"}}>
                     {elapsedStr}
@@ -1084,6 +1087,7 @@ function OwnerDashboard({ onLogout }) {
   const [overviewMode, setOverviewMode] = useState("weekly");
   const [retentionDaysInput, setRetentionDaysInput] = useState("120");
   const [showNewPass, setShowNewPass] = useState(false);
+  const [liveEmpTypeFilter, setLiveEmpTypeFilter] = useState("All");
   const newPassIssues = ownerPasswordIssues(newPass);
   const canUpdateOwnerPass = newPass.trim().length > 0 && newPassIssues.length === 0;
 
@@ -1160,6 +1164,23 @@ function OwnerDashboard({ onLogout }) {
     : fEmployees, [fEmployees, timesheetSearch]);
 
   const activeSessions = useMemo(() => fLogs.filter(l => !l.clockOut), [fLogs]);
+  
+  const filteredActiveSessions = useMemo(() => activeSessions.filter(sess => {
+    if (liveEmpTypeFilter === "All") return true;
+    const emp = fEmployees.find(e => e.id === sess.employeeId);
+    return (emp?.employmentType || "Full-time") === liveEmpTypeFilter;
+  }), [activeSessions, fEmployees, liveEmpTypeFilter]);
+
+  const filteredTodayLogs = useMemo(() => {
+    const today = new Date(); today.setHours(0,0,0,0);
+    return fLogs.filter(l => {
+      if (!l.clockOut || new Date(l.clockIn) < today) return false;
+      if (liveEmpTypeFilter === "All") return true;
+      const emp = fEmployees.find(e => e.id === l.employeeId);
+      return (emp?.employmentType || "Full-time") === liveEmpTypeFilter;
+    });
+  }, [fLogs, fEmployees, liveEmpTypeFilter]);
+
   const pendingLeaves = useMemo(() => fLeaves.filter(l => l.status === "pending"), [fLeaves]);
   const approvedLeaves = useMemo(() => fLeaves.filter(l => l.status === "approved"), [fLeaves]);
   const rejectedLeaves = useMemo(() => fLeaves.filter(l => l.status === "rejected"), [fLeaves]);
@@ -1222,10 +1243,18 @@ function OwnerDashboard({ onLogout }) {
   };
 
   const clockOutAllActive = async () => {
-    if (!window.confirm(`Are you sure you want to clock out all ${activeSessions.length} active employees for ${selectedBranch === "All" ? "all branches" : selectedBranch}?`)) return;
+    if (!window.confirm(`Are you sure you want to clock out all ${filteredActiveSessions.length} active employees?`)) return;
     const nowIso = new Date().toISOString();
-    const activeIds = new Set(activeSessions.map(s => s.id));
+    const activeIds = new Set(filteredActiveSessions.map(s => s.id));
     const updatedLogs = logs.map(l => activeIds.has(l.id) ? { ...l, clockOut: nowIso } : l);
+    await storage.set("timelogs", updatedLogs);
+    setLogs(updatedLogs);
+  };
+
+  const clockOutSingle = async (id, name) => {
+    if (!window.confirm(`Are you sure you want to clock out ${name}?`)) return;
+    const nowIso = new Date().toISOString();
+    const updatedLogs = logs.map(l => l.id === id ? { ...l, clockOut: nowIso } : l);
     await storage.set("timelogs", updatedLogs);
     setLogs(updatedLogs);
   };
@@ -1529,7 +1558,7 @@ function OwnerDashboard({ onLogout }) {
         ))}
       </div>
 
-      <div style={{padding:20,maxWidth:860,margin:"0 auto"}}>
+      <div style={{padding:20,maxWidth: isWindows ? "100%" : 860,margin:"0 auto"}}>
 
         {/* ── OVERVIEW ── */}
         {tab === "overview" && (
@@ -1605,14 +1634,14 @@ function OwnerDashboard({ onLogout }) {
                       </div>
                       <div style={{textAlign: "left"}}>
                         <p style={{fontWeight:600,fontSize:14}}>{emp.name}</p>
-                        <p style={{fontSize:12,color:"var(--muted)"}}>{emp.role} {emp.branch ? `· ${emp.branch}` : ""} · ₹{emp.dailySalary||0}/day (₹{emp.hourlyRate||0}/hr)</p>
+                        <p style={{fontSize:12,color:"var(--muted)"}}>{emp.role} {emp.branch ? `· ${emp.branch}` : ""} · {emp.employmentType || "Full-time"} · ₹{emp.dailySalary||0}/day (₹{emp.hourlyRate||0}/hr)</p>
                       </div>
                     </div>
                     <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
                       {sess && <span style={{fontSize:13,fontFamily:"'Playfair Display',serif",color:"var(--success)",fontWeight:600}}>{eStr}</span>}
                       <span style={{fontSize:12,color:"var(--muted)"}}>{wh.toFixed(1)} hrs/wk</span>
                       {sess
-                        ? <span className="tag tag-green">● Clocked In {fmt(sess.clockIn)}</span>
+                      ? <span className="tag tag-green">● In: {fmtDate(sess.clockIn)} {fmt(sess.clockIn)}</span>
                         : <span className="tag tag-muted">○ Off</span>}
                     </div>
                   </div>
@@ -1628,9 +1657,14 @@ function OwnerDashboard({ onLogout }) {
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20,flexWrap:"wrap",gap:12}}>
               <div style={{display:"flex",alignItems:"center",gap:16}}>
                 <h3 style={{fontSize:20,marginBottom:0}}>Live Clock Activity</h3>
-                {activeSessions.length > 0 && (
+                <select className="input" style={{width:"auto", padding:"4px 10px", marginBottom:0, background:"var(--card-2)", border:"1px solid var(--border)", color:"var(--gold)", fontSize:13}} value={liveEmpTypeFilter} onChange={e => setLiveEmpTypeFilter(e.target.value)}>
+                  <option value="All">All Types</option>
+                  <option value="Full-time">Full-time</option>
+                  <option value="Part-time">Part-time</option>
+                </select>
+                {filteredActiveSessions.length > 0 && (
                   <button className="btn btn-danger btn-sm" onClick={clockOutAllActive}>
-                    Clock Out All ({selectedBranch})
+                    Clock Out All
                   </button>
                 )}
               </div>
@@ -1646,14 +1680,14 @@ function OwnerDashboard({ onLogout }) {
             {/* Active sessions */}
             <div style={{marginBottom:24}}>
               <p style={{fontSize:12,color:"var(--muted)",textTransform:"uppercase",letterSpacing:".1em",marginBottom:12,fontWeight:500}}>
-                Currently Clocked In ({activeSessions.length})
+                Currently Clocked In ({filteredActiveSessions.length})
               </p>
-              {activeSessions.length === 0 && (
+              {filteredActiveSessions.length === 0 && (
                 <div className="card" style={{textAlign:"center",padding:"28px",color:"var(--muted)",fontSize:13}}>
                   No staff currently clocked in
                 </div>
               )}
-              {activeSessions.map(sess => {
+              {filteredActiveSessions.map(sess => {
                 const emp = fEmployees.find(e => e.id === sess.employeeId);
                 const elapsed = Math.floor((now - new Date(sess.clockIn)) / 1000);
                 const eStr = `${String(Math.floor(elapsed/3600)).padStart(2,"0")}:${String(Math.floor((elapsed%3600)/60)).padStart(2,"0")}:${String(elapsed%60).padStart(2,"0")}`;
@@ -1675,12 +1709,15 @@ function OwnerDashboard({ onLogout }) {
                       </div>
                       <div style={{textAlign: "left"}}>
                         <p style={{fontWeight:600}}>{sess.name}</p>
-                        <p style={{fontSize:12,color:"var(--muted)"}}>{emp?.role} {emp?.branch ? `· ${emp.branch}` : ""} · Clocked in at <strong style={{color:"var(--text-2)"}}>{fmt(sess.clockIn)}</strong></p>
+                        <p style={{fontSize:12,color:"var(--muted)"}}>{emp?.role} {emp?.branch ? `· ${emp.branch}` : ""} · {emp?.employmentType || "Full-time"} · Clocked in <strong style={{color:"var(--text-2)"}}>{fmtDate(sess.clockIn)} {fmt(sess.clockIn)}</strong></p>
                       </div>
                     </div>
                     <div style={{textAlign:"right"}}>
                       <div style={{fontSize:26,fontFamily:"'Playfair Display',serif",color:"var(--success)",fontWeight:600,letterSpacing:"0.05em"}}>{eStr}</div>
-                      <div style={{fontSize:12,color:"var(--muted)"}}>₹{((hrs) * (emp?.hourlyRate || 0)).toFixed(2)} earned</div>
+                      <div style={{fontSize:12,color:"var(--muted)", marginBottom: 8}}>₹{((hrs) * (emp?.hourlyRate || 0)).toFixed(2)} earned</div>
+                      <button className="btn btn-outline btn-xs" onClick={() => clockOutSingle(sess.id, sess.name)}>
+                        <StopCircle size={12} style={{marginRight: 2}}/> Clock Out
+                      </button>
                     </div>
                   </div>
                 );
@@ -1690,12 +1727,10 @@ function OwnerDashboard({ onLogout }) {
             {/* Today's completed sessions */}
             <p style={{fontSize:12,color:"var(--muted)",textTransform:"uppercase",letterSpacing:".1em",marginBottom:12,fontWeight:500}}>Today's Completed Sessions</p>
             {(() => {
-              const today = new Date(); today.setHours(0,0,0,0);
-              const todayLogs = fLogs.filter(l => l.clockOut && new Date(l.clockIn) >= today);
-              if (todayLogs.length === 0) return (
+              if (filteredTodayLogs.length === 0) return (
                 <div className="card" style={{textAlign:"center",padding:"28px",color:"var(--muted)",fontSize:13}}>No completed sessions today</div>
               );
-              return todayLogs.map(l => {
+              return filteredTodayLogs.map(l => {
                 const emp = fEmployees.find(e => e.id === l.employeeId);
             const h = hoursWorked(l.clockIn, l.clockOut, l.breaks);
                 return (
@@ -1704,6 +1739,7 @@ function OwnerDashboard({ onLogout }) {
                       <p style={{fontWeight:600,fontSize:14}}>{l.name}</p>
                       <p style={{fontSize:12,color:"var(--muted)"}}>
                         {fmt(l.clockIn)} → {fmt(l.clockOut)} &nbsp;·&nbsp; {emp?.role} {emp?.branch ? `· ${emp.branch}` : ""}
+                        {fmt(l.clockIn)} → {fmt(l.clockOut)} &nbsp;·&nbsp; {emp?.role} {emp?.branch ? `· ${emp.branch}` : ""} · {emp?.employmentType || "Full-time"}
                       </p>
                     </div>
                     <div style={{display:"flex",gap:10,alignItems:"center"}}>
