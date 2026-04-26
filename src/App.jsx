@@ -327,6 +327,10 @@ const GlobalStyle = () => (
         justify-content: center;
         margin-left: 0 !important;
       }
+      .mobile-export-btn {
+        flex: 1 1 100%;
+        justify-content: center;
+      }
     }
   `}</style>
 );
@@ -1572,14 +1576,14 @@ function OwnerDashboard({ onLogout }) {
         {/* ── OVERVIEW ── */}
         {tab === "overview" && (
           <div className="fade-up">
-            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(145px,1fr))",gap:12,marginBottom:20}}>
+            <div style={{display:"flex",flexWrap:"wrap",gap:12,marginBottom:20}}>
               {[
                 {label:"Total Staff", value:fEmployees.length, icon:<Users size={14} />, color:"var(--accent)"},
                 {label:"Active Now",  value:activeSessions.length, icon:<Timer size={14} />, color:"var(--success)"},
                 {label:"Pending Leaves", value:pendingLeaves.length, icon:<Calendar size={14} />, color:"var(--amber)"},
                 {label:"Advances Req.", value:pendingAdvances.length, icon:<IndianRupee size={14} />, color:"var(--amber)"},
               ].map(s => (
-                <div key={s.label} className="card" style={{position:"relative",overflow:"hidden"}}>
+                <div key={s.label} className="card" style={{flex:"1 1 145px",position:"relative",overflow:"hidden"}}>
                   <div style={{color:s.color, marginBottom:8}}>{s.icon}</div>
                   <div style={{fontSize:26,fontWeight:700,color:s.color,fontFamily:"'Playfair Display',serif",marginBottom:2}}>{s.value}</div>
                   <div style={{fontSize:12,color:"var(--muted)",fontWeight:500}}>{s.label}</div>
@@ -1773,7 +1777,7 @@ function OwnerDashboard({ onLogout }) {
                     <button className={`btn btn-sm ${tsMode==="monthly" ? "btn-gold" : "btn-ghost"}`} style={{border:"none", padding:"4px 10px"}} onClick={() => {setTsMode("monthly"); setTsOffset(0);}}>Monthly</button>
                   </div>
                 </div>
-                <button className="btn btn-gold btn-sm" onClick={exportTimesheetsCSV}><Download size={14}/> Export</button>
+                <button className="btn btn-gold btn-sm mobile-export-btn" onClick={exportTimesheetsCSV}><Download size={14}/> Export</button>
               </div>
               <div style={{display:"flex", gap:8, alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", background:"var(--card)", padding:"8px 12px", borderRadius:10, border:"1px solid var(--border)"}}>
                 <button className="btn btn-outline btn-sm" onClick={() => setTsOffset(p=>p-1)}><ChevronLeft size={14}/> Prev</button>
@@ -1855,7 +1859,7 @@ function OwnerDashboard({ onLogout }) {
                     <button className={`btn btn-sm ${prMode==="monthly" ? "btn-gold" : "btn-ghost"}`} style={{border:"none", padding:"4px 10px"}} onClick={() => {setPrMode("monthly"); setPrOffset(0);}}>Monthly</button>
                   </div>
                 </div>
-                <button className="btn btn-gold btn-sm" onClick={exportPayrollCSV}><Download size={14}/> Export</button>
+                <button className="btn btn-gold btn-sm mobile-export-btn" onClick={exportPayrollCSV}><Download size={14}/> Export</button>
               </div>
               <div style={{display:"flex", gap:8, alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", background:"var(--card)", padding:"8px 12px", borderRadius:10, border:"1px solid var(--border)"}}>
                 <button className="btn btn-outline btn-sm" onClick={() => setPrOffset(p=>p-1)}><ChevronLeft size={14}/> Prev</button>
@@ -2011,9 +2015,9 @@ function OwnerDashboard({ onLogout }) {
               <div className="card" style={{textAlign:"center",padding:"32px",color:"var(--muted)",fontSize:13,marginBottom:28}}>No leave requests yet.</div>
             )}
 
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20,borderTop:"1px solid var(--border)",paddingTop:28}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10,marginBottom:20,borderTop:"1px solid var(--border)",paddingTop:28}}>
               <h3 style={{fontSize:20,marginBottom:0,textAlign:"left"}}>Salary Advances</h3>
-              <button className="btn btn-gold btn-sm" onClick={exportAdvancesCSV}><Download size={14}/> Export CSV</button>
+              <button className="btn btn-gold btn-sm mobile-export-btn" onClick={exportAdvancesCSV}><Download size={14}/> Export CSV</button>
             </div>
 
             {/* Pending */}
