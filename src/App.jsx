@@ -319,6 +319,15 @@ const GlobalStyle = () => (
       display: inline-block;
       animation: dot-blink 1.4s ease-in-out infinite;
     }
+
+    @media (max-width: 600px) {
+      .mobile-center-tag {
+        width: 100%;
+        display: flex;
+        justify-content: center;
+        margin-left: 0 !important;
+      }
+    }
   `}</style>
 );
 
@@ -1738,7 +1747,6 @@ function OwnerDashboard({ onLogout }) {
                     <div style={{textAlign: "left"}}>
                       <p style={{fontWeight:600,fontSize:14}}>{l.name}</p>
                       <p style={{fontSize:12,color:"var(--muted)"}}>
-                        {fmt(l.clockIn)} → {fmt(l.clockOut)} &nbsp;·&nbsp; {emp?.role} {emp?.branch ? `· ${emp.branch}` : ""}
                         {fmt(l.clockIn)} → {fmt(l.clockOut)} &nbsp;·&nbsp; {emp?.role} {emp?.branch ? `· ${emp.branch}` : ""} · {emp?.employmentType || "Full-time"}
                       </p>
                     </div>
@@ -1756,22 +1764,24 @@ function OwnerDashboard({ onLogout }) {
         {/* ── TIMESHEETS ── */}
         {tab === "timesheet" && (
           <div className="fade-up">
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16,flexWrap:"wrap",gap:10}}>
-              <div style={{display:"flex",alignItems:"center",gap:16}}>
-                <h3 style={{fontSize:20}}>Timesheets</h3>
-                <div style={{display:"flex",gap:4,alignItems:"center", background:"var(--card-2)", padding:"4px", borderRadius:10, border:"1px solid var(--border)"}}>
-                  <button className={`btn btn-sm ${tsMode==="weekly" ? "btn-gold" : "btn-ghost"}`} style={{border:"none", padding:"4px 10px"}} onClick={() => {setTsMode("weekly"); setTsOffset(0);}}>Weekly</button>
-                  <button className={`btn btn-sm ${tsMode==="monthly" ? "btn-gold" : "btn-ghost"}`} style={{border:"none", padding:"4px 10px"}} onClick={() => {setTsMode("monthly"); setTsOffset(0);}}>Monthly</button>
+            <div style={{display:"flex", flexDirection:"column", gap:12, marginBottom:16}}>
+              <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:10}}>
+                <div style={{display:"flex", alignItems:"center", gap:16, flexWrap:"wrap"}}>
+                  <h3 style={{fontSize:20, margin:0}}>Timesheets</h3>
+                  <div style={{display:"flex",gap:4,alignItems:"center", background:"var(--card-2)", padding:"4px", borderRadius:10, border:"1px solid var(--border)"}}>
+                    <button className={`btn btn-sm ${tsMode==="weekly" ? "btn-gold" : "btn-ghost"}`} style={{border:"none", padding:"4px 10px"}} onClick={() => {setTsMode("weekly"); setTsOffset(0);}}>Weekly</button>
+                    <button className={`btn btn-sm ${tsMode==="monthly" ? "btn-gold" : "btn-ghost"}`} style={{border:"none", padding:"4px 10px"}} onClick={() => {setTsMode("monthly"); setTsOffset(0);}}>Monthly</button>
+                  </div>
                 </div>
+                <button className="btn btn-gold btn-sm" onClick={exportTimesheetsCSV}><Download size={14}/> Export</button>
               </div>
-              <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              <div style={{display:"flex", gap:8, alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", background:"var(--card)", padding:"8px 12px", borderRadius:10, border:"1px solid var(--border)"}}>
                 <button className="btn btn-outline btn-sm" onClick={() => setTsOffset(p=>p-1)}><ChevronLeft size={14}/> Prev</button>
-                <span style={{fontSize:13,color:"var(--muted)",background:"var(--card)",border:"1px solid var(--border)",padding:"6px 12px",borderRadius:8}}>
+                <span style={{fontSize:13,color:"var(--text)",fontWeight:500, textAlign:"center", flex:"1 1 auto"}}>
                   {tsStart.toLocaleDateString("en-GB",{day:"numeric",month:"short"})} – {new Date(tsEnd-1).toLocaleDateString("en-GB",{day:"numeric",month:"short"})}
                 </span>
                 <button className="btn btn-outline btn-sm" onClick={() => setTsOffset(p=>p+1)} disabled={tsOffset===0}>Next <ChevronRight size={14}/></button>
               </div>
-              <button className="btn btn-gold btn-sm" onClick={exportTimesheetsCSV}><Download size={14}/> Export {tsMode==="weekly" ? "Week" : "Month"} CSV</button>
             </div>
 
             <div style={{marginBottom:16}}>
@@ -1797,27 +1807,33 @@ function OwnerDashboard({ onLogout }) {
               const wh = totalHours(wl.filter(l=>l.clockOut));
               const pay = wh * (emp.hourlyRate||0);
               return (
-                <div key={emp.id} className="card" style={{marginBottom:14}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,flexWrap:"wrap",gap:8}}>
-                    <div>
+                <div key={emp.id} className="card" style={{marginBottom:14, textAlign: "left"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12,flexWrap:"wrap",gap:12}}>
+                    <div style={{flex:"1 1 200px"}}>
                       <span style={{fontWeight:600}}>{emp.name}</span>
-                      <span style={{fontSize:12,color:"var(--muted)",marginLeft:8}}>{emp.role} {emp.branch ? `· ${emp.branch}` : ""}</span>
+                      <div style={{fontSize:12,color:"var(--muted)",marginTop:2}}>{emp.role} {emp.branch ? `· ${emp.branch}` : ""}</div>
                     </div>
-                    <span className="tag tag-gold">{wh.toFixed(1)} hrs · ₹{pay.toFixed(2)}</span>
+                    <div className="mobile-center-tag" style={{marginLeft:"auto"}}>
+                      <span className="tag tag-gold" style={{whiteSpace:"nowrap"}}>{wh.toFixed(1)} hrs · ₹{pay.toFixed(2)}</span>
+                    </div>
                   </div>
                   {wl.length === 0
                     ? <p style={{color:"var(--muted)",fontSize:13,textAlign:"center",padding:"10px 0"}}>No shifts this {tsMode==="weekly" ? "week" : "month"}.</p>
                     : wl.map((l,idx) => (
                       <div key={l.id} style={{
                         display:"flex",justifyContent:"space-between",alignItems:"center",
-                        padding:"9px 0",
+                        padding:"12px 0", flexWrap:"wrap", gap:8,
                         borderBottom: idx < wl.length-1 ? "1px solid var(--border)" : "none",
                         fontSize:13
                       }}>
-                        <span style={{color:"var(--muted)"}}>{fmtDate(l.clockIn)}</span>
-                        <span>{fmt(l.clockIn)} → {l.clockOut ? fmt(l.clockOut) : <span style={{color:"var(--success)"}}>Active</span>}</span>
-                        <span style={{color:"var(--gold)"}}>{l.clockOut ? `${hoursWorked(l.clockIn,l.clockOut,l.breaks).toFixed(1)}h` : "—"}</span>
-                        <button className="btn btn-danger btn-xs" onClick={() => deleteLog(l.id)}><X size={12}/></button>
+                        <div style={{display:"flex", flexDirection:"column", gap:4, flex:"1 1 150px", textAlign: "left"}}>
+                          <span style={{color:"var(--muted)", fontSize:12}}>{fmtDate(l.clockIn)}</span>
+                          <span style={{fontWeight:500}}>{fmt(l.clockIn)} → {l.clockOut ? fmt(l.clockOut) : <span style={{color:"var(--success)"}}>Active</span>}</span>
+                        </div>
+                        <div style={{display:"flex", alignItems:"center", gap:12, marginLeft:"auto"}}>
+                          <span style={{color:"var(--gold)", fontWeight:600}}>{l.clockOut ? `${hoursWorked(l.clockIn,l.clockOut,l.breaks).toFixed(1)}h` : "—"}</span>
+                          <button className="btn btn-danger btn-xs" onClick={() => deleteLog(l.id)}><X size={12}/></button>
+                        </div>
                       </div>
                     ))
                   }
@@ -1830,22 +1846,24 @@ function OwnerDashboard({ onLogout }) {
         {/* ── PAYROLL ── */}
         {tab === "payroll" && (
           <div className="fade-up">
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16,flexWrap:"wrap",gap:10}}>
-              <div style={{display:"flex",alignItems:"center",gap:16}}>
-                <h3 style={{fontSize:20}}>Payroll Summary</h3>
-                <div style={{display:"flex",gap:4,alignItems:"center", background:"var(--card-2)", padding:"4px", borderRadius:10, border:"1px solid var(--border)"}}>
-                  <button className={`btn btn-sm ${prMode==="weekly" ? "btn-gold" : "btn-ghost"}`} style={{border:"none", padding:"4px 10px"}} onClick={() => {setPrMode("weekly"); setPrOffset(0);}}>Weekly</button>
-                  <button className={`btn btn-sm ${prMode==="monthly" ? "btn-gold" : "btn-ghost"}`} style={{border:"none", padding:"4px 10px"}} onClick={() => {setPrMode("monthly"); setPrOffset(0);}}>Monthly</button>
+            <div style={{display:"flex", flexDirection:"column", gap:12, marginBottom:16}}>
+              <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:10}}>
+                <div style={{display:"flex", alignItems:"center", gap:16, flexWrap:"wrap"}}>
+                  <h3 style={{fontSize:20, margin:0}}>Payroll Summary</h3>
+                  <div style={{display:"flex",gap:4,alignItems:"center", background:"var(--card-2)", padding:"4px", borderRadius:10, border:"1px solid var(--border)"}}>
+                    <button className={`btn btn-sm ${prMode==="weekly" ? "btn-gold" : "btn-ghost"}`} style={{border:"none", padding:"4px 10px"}} onClick={() => {setPrMode("weekly"); setPrOffset(0);}}>Weekly</button>
+                    <button className={`btn btn-sm ${prMode==="monthly" ? "btn-gold" : "btn-ghost"}`} style={{border:"none", padding:"4px 10px"}} onClick={() => {setPrMode("monthly"); setPrOffset(0);}}>Monthly</button>
+                  </div>
                 </div>
+                <button className="btn btn-gold btn-sm" onClick={exportPayrollCSV}><Download size={14}/> Export</button>
               </div>
-              <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              <div style={{display:"flex", gap:8, alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", background:"var(--card)", padding:"8px 12px", borderRadius:10, border:"1px solid var(--border)"}}>
                 <button className="btn btn-outline btn-sm" onClick={() => setPrOffset(p=>p-1)}><ChevronLeft size={14}/> Prev</button>
-                <span style={{fontSize:13,color:"var(--muted)",background:"var(--card)",border:"1px solid var(--border)",padding:"6px 12px",borderRadius:8}}>
+                <span style={{fontSize:13,color:"var(--text)",fontWeight:500, textAlign:"center", flex:"1 1 auto"}}>
                   {prStart.toLocaleDateString("en-GB",{day:"numeric",month:"short"})} – {new Date(prEnd-1).toLocaleDateString("en-GB",{day:"numeric",month:"short"})}
                 </span>
                 <button className="btn btn-outline btn-sm" onClick={() => setPrOffset(p=>p+1)} disabled={prOffset===0}>Next <ChevronRight size={14}/></button>
               </div>
-              <button className="btn btn-gold btn-sm" onClick={exportPayrollCSV}><Download size={14}/> Export {prMode==="weekly" ? "Week" : "Month"} CSV</button>
             </div>
 
             <div style={{marginBottom:16}}>
@@ -1873,29 +1891,29 @@ function OwnerDashboard({ onLogout }) {
                 const advance = getPrAdvances(emp.id).reduce((sum, a) => sum + a.amount, 0);
                 const net = gross - advance;
                 return (
-                  <div key={emp.id} className="card" style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
-                    <div style={{textAlign:"left"}}>
-                      <div style={{fontWeight:600,marginBottom:2}}>{emp.name}</div>
-                      <div style={{fontSize:12,color:"var(--muted)"}}>{emp.branch ? `${emp.branch} · ` : ""}{emp.paymentCycle || "Weekly"} · {payroll.daysWorked} days · {payroll.totalHours.toFixed(2)} hrs ({payroll.overtimeHours.toFixed(2)} OT, {payroll.deficitHours.toFixed(2)} Deficit) · ₹{emp.hourlyRate||0}/hr</div>
+                  <div key={emp.id} className="card" style={{display:"flex", flexWrap:"wrap", gap:16}}>
+                    <div style={{flex:"1 1 200px"}}>
+                      <div style={{fontWeight:600,marginBottom:4}}>{emp.name}</div>
+                      <div style={{fontSize:12,color:"var(--muted)", lineHeight:1.5}}>{emp.branch ? `${emp.branch} · ` : ""}{emp.paymentCycle || "Weekly"} · {payroll.daysWorked} days · {payroll.totalHours.toFixed(2)} hrs ({payroll.overtimeHours.toFixed(2)} OT, {payroll.deficitHours.toFixed(2)} Deficit) · ₹{emp.hourlyRate||0}/hr</div>
                     </div>
-                    <div style={{textAlign:"right"}}>
-                      <div style={{fontSize:13,color:"var(--muted)",fontWeight:500,marginBottom:2}}>Gross: ₹{gross.toFixed(2)}</div>
-                      <div style={{fontSize:26,fontFamily:"'Playfair Display',serif",color:"var(--gold)",fontWeight:700}}>₹{net.toFixed(2)}</div>
-                      {advance > 0 && <div style={{fontSize:12,color:"var(--danger)",fontWeight:500}}>Advances: -₹{advance.toFixed(2)}</div>}
-                      {payroll.totalHours === 0 && advance === 0 && <span style={{fontSize:12,color:"var(--muted)"}}>No shifts</span>}
+                    <div style={{flex:"0 1 auto", marginLeft:"auto", minWidth:"140px", textAlign:"right"}}>
+                      <div style={{fontSize:13,color:"var(--muted)",fontWeight:500,marginBottom:4}}>Gross: ₹{gross.toFixed(2)}</div>
+                      <div style={{fontSize:26,fontFamily:"'Playfair Display',serif",color:"var(--gold)",fontWeight:700,lineHeight:1}}>₹{net.toFixed(2)}</div>
+                      {advance > 0 && <div style={{fontSize:12,color:"var(--danger)",fontWeight:500,marginTop:4}}>Advances: -₹{advance.toFixed(2)}</div>}
+                      {payroll.totalHours === 0 && advance === 0 && <div style={{fontSize:12,color:"var(--muted)",marginTop:4}}>No shifts</div>}
                     </div>
                   </div>
                 );
               })}
             </div>
 
-            <div className="card-glow" style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:16}}>
-              <div>
-                <p style={{color:"var(--muted)",fontSize:13}}>Total Net {prMode==="weekly"?"Weekly":"Monthly"} Payroll</p>
-                <p style={{color:"var(--muted)",fontSize:12}}>{totalPrHrs.toFixed(2)} hrs · {prEmployees.length} staff</p>
+            <div className="card-glow" style={{display:"flex", flexWrap:"wrap", gap:16}}>
+              <div style={{flex:"1 1 180px"}}>
+                <p style={{color:"var(--muted)",fontSize:13, marginBottom:4}}>Total Net {prMode==="weekly"?"Weekly":"Monthly"} Payroll</p>
+                <p style={{color:"var(--text-2)",fontSize:12}}>{totalPrHrs.toFixed(2)} hrs · {prEmployees.length} staff</p>
               </div>
-              <div style={{textAlign:"right"}}>
-                <div style={{fontSize:14,color:"var(--muted)",fontWeight:500,marginBottom:4}}>Gross: ₹{totalPrGross.toFixed(2)} {totalPrAdvance > 0 && <span style={{color:"var(--danger)"}}>| Adv: -₹{totalPrAdvance.toFixed(2)}</span>}</div>
+              <div style={{flex:"0 1 auto", marginLeft:"auto", textAlign:"right"}}>
+                <div style={{fontSize:14,color:"var(--muted)",fontWeight:500,marginBottom:6}}>Gross: ₹{totalPrGross.toFixed(2)} {totalPrAdvance > 0 && <span style={{color:"var(--danger)"}}>| Adv: -₹{totalPrAdvance.toFixed(2)}</span>}</div>
                 <div style={{fontSize:36,fontFamily:"'Playfair Display',serif",color:"var(--gold)",fontWeight:700,lineHeight:1}}>₹{totalPrPay.toFixed(2)}</div>
               </div>
             </div>
