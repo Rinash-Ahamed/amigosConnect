@@ -688,7 +688,9 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
       const st = { ...defaultSettings(), ...((await storage.get("appSettings")) || {}) };
       const all = (await storage.get("timelogs")) || [];
       const autoClosed = applyAutoClockOut(all, st);
-      if (autoClosed.changed) await storage.set("timelogs", autoClosed.logs);
+      if (autoClosed.changed) {
+        await storage.set("timelogs", autoClosed.logs);
+      }
       const mine = autoClosed.logs.filter(l => l.employeeId === employee.id);
       setLogs(mine);
       const open = mine.find(l => !l.clockOut);
@@ -729,16 +731,17 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
     setClocking(true);
     try {
       let finalActive = { ...active };
+      const clockOutIso = new Date().toISOString();
       // auto-end any open break
       if (finalActive.breaks && finalActive.breaks.length > 0) {
         const lastBreak = finalActive.breaks[finalActive.breaks.length - 1];
         if (!lastBreak.end) {
           const updatedBreaks = [...finalActive.breaks];
-          updatedBreaks[updatedBreaks.length - 1] = { ...lastBreak, end: new Date().toISOString() };
+          updatedBreaks[updatedBreaks.length - 1] = { ...lastBreak, end: clockOutIso };
           finalActive.breaks = updatedBreaks;
         }
       }
-      const updated = { ...finalActive, clockOut: new Date().toISOString() };
+      const updated = { ...finalActive, clockOut: clockOutIso };
       const all = (await storage.get("timelogs")) || [];
       await storage.set("timelogs", all.map(l => l.id === active.id ? updated : l));
       setLogs(p => p.map(l => l.id === active.id ? updated : l));
@@ -1200,7 +1203,9 @@ function OwnerDashboard({ onLogout }) {
     ]);
     if (!st.branches) st.branches = ["Mens", "Womens", "Crazo", "Warehouse"];
     const autoClosed = applyAutoClockOut(tlogs, st);
-    if (autoClosed.changed) await storage.set("timelogs", autoClosed.logs);
+    if (autoClosed.changed) {
+      await storage.set("timelogs", autoClosed.logs);
+    }
     if (emps === undefined) {
       alert("Could not load staff data. Please check your connection before editing staff.");
     }
@@ -1716,28 +1721,6 @@ function OwnerDashboard({ onLogout }) {
               ))}
             </div>
 
-            {activeSessions.length > 0 && (
-              <div className="card" style={{marginBottom:20,border:"1px solid rgba(245,158,11,.28)",background:"var(--amber-bg)"}}>
-                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexWrap:"wrap",marginBottom:10}}>
-                  <h3 style={{fontSize:16,color:"var(--amber)",marginBottom:0}}>Not Clocked Out</h3>
-                  <span className="tag tag-amber">{activeSessions.length} active</span>
-                </div>
-                <div style={{display:"flex",flexDirection:"column",gap:8}}>
-                  {activeSessions.map(sess => {
-                    const emp = fEmployees.find(e => e.id === sess.employeeId);
-                    return (
-                      <div key={sess.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap"}}>
-                        <span style={{fontSize:14,fontWeight:600,color:"var(--text)"}}>{sess.name}</span>
-                        <span style={{fontSize:12,color:"var(--muted)"}}>
-                          {emp?.branch ? `${emp.branch} · ` : ""}In since {fmtDate(sess.clockIn)} {fmt(sess.clockIn)}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
             {/* Hours Distribution Chart */}
             <div className="card-glow" style={{marginBottom:24}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
@@ -2252,7 +2235,6 @@ function OwnerDashboard({ onLogout }) {
                 </label>
               </div>
             </div>
-
             <div className="card" style={{marginBottom: 20}}>
               <h4 style={{fontSize:16, marginBottom:6}}>Default Clock Out Time</h4>
               <p style={{color:"var(--muted)", fontSize:13, marginBottom:16}}>
