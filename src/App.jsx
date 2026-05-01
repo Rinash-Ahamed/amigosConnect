@@ -6,7 +6,7 @@ import {
   Edit2, Trash2, Flag, Eye, EyeOff, ChevronLeft, ChevronRight, LogOut 
 } from "lucide-react";
 import { initializeApp } from "firebase/app";
-import { getFirestore, doc, getDoc, setDoc, collection, getDocs, deleteDoc } from "firebase/firestore";
+import { getFirestore, doc, getDoc, setDoc, collection, getDocs, deleteDoc, onSnapshot } from "firebase/firestore";
 
 // ── Firebase Configuration ──
 const firebaseConfig = {
@@ -90,6 +90,40 @@ const storage = {
   async remove(key, id) {
     try { await deleteDoc(doc(db, key, id)); } 
     catch (e) { console.error(`Firebase REMOVE error:`, e); }
+  },
+  subscribe(key, callback) {
+    if (key === "appSettings" || key === "ownerPass") {
+      return onSnapshot(doc(db, "amigos_store", key), (docSnap) => {
+        const data = docSnap.exists() ? docSnap.data().value : null;
+        if (key === "appSettings" && data && data.retentionDays) {
+          cachedRetentionDays = data.retentionDays;
+        }
+        callback(data);
+      }, (e) => console.error(`Firebase SUBSCRIBE error for ${key}:`, e));
+    } else {
+      // --- ONE-TIME AUTO MIGRATION ---
+      const oldDocRef = doc(db, "amigos_store", key);
+      getDoc(oldDocRef).then(async (oldDocSnap) => {
+        if (oldDocSnap.exists()) {
+          const oldData = oldDocSnap.data().value;
+          if (Array.isArray(oldData) && oldData.length > 0) {
+            await Promise.all(oldData.map(item => setDoc(doc(db, key, item.id), item)));
+          }
+          await deleteDoc(oldDocRef);
+        }
+      }).catch(e => console.error(`Migration error for ${key}:`, e));
+      // -------------------------------
+
+      return onSnapshot(collection(db, key), (snapshot) => {
+        let data = snapshot.docs.map(d => d.data());
+        // Auto-Cleanup
+        if (key === "timelogs" || key === "leaves" || key === "advances") {
+          const cutoffDate = new Date(Date.now() - cachedRetentionDays * 24 * 60 * 60 * 1000).toISOString();
+          data = data.filter(item => (item.clockIn || item.appliedAt || item.from) > cutoffDate);
+        }
+        callback(data);
+      }, (e) => console.error(`Firebase SUBSCRIBE error for ${key}:`, e));
+    }
   }
 };
 
