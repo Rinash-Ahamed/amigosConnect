@@ -6,7 +6,7 @@ import {
   Edit2, Trash2, Flag, Eye, EyeOff, ChevronLeft, ChevronRight, LogOut 
 } from "lucide-react";
 import { initializeApp } from "firebase/app";
-import { getFirestore, doc, getDoc, setDoc } from "firebase/firestore";
+import { getFirestore, doc, getDoc, setDoc, collection, getDocs, deleteDoc } from "firebase/firestore";
 
 // ── Firebase Configuration ──
 const firebaseConfig = {
@@ -27,49 +27,70 @@ let cachedRetentionDays = 120;
 const storage = {
   async get(key) {
     try {
-      const docRef = doc(db, "amigos_store", key);
-      const docSnap = await getDoc(docRef);
-      if (docSnap.exists()) {
-        let data = docSnap.data().value;
-        
-        if (key === "appSettings" && data && data.retentionDays) {
-          cachedRetentionDays = data.retentionDays;
+      if (key === "appSettings" || key === "ownerPass") {
+        const docRef = doc(db, "amigos_store", key);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          const data = docSnap.data().value;
+          if (key === "appSettings" && data && data.retentionDays) {
+            cachedRetentionDays = data.retentionDays;
+          }
+          return data;
         }
-        
+        return null;
+      } else {
+        // --- ONE-TIME AUTO MIGRATION ---
+        const oldDocRef = doc(db, "amigos_store", key);
+        const oldDocSnap = await getDoc(oldDocRef);
+        if (oldDocSnap.exists()) {
+          const oldData = oldDocSnap.data().value;
+          if (Array.isArray(oldData) && oldData.length > 0) {
+            await Promise.all(oldData.map(item => setDoc(doc(db, key, item.id), item)));
+          }
+          await deleteDoc(oldDocRef); // Delete old document so migration doesn't run again
+        }
+        // -------------------------------
+
+        const snapshot = await getDocs(collection(db, key));
+        let data = snapshot.docs.map(d => d.data());
         // Auto-Cleanup
-        if (Array.isArray(data) && (key === "timelogs" || key === "leaves" || key === "advances")) {
+        if (key === "timelogs" || key === "leaves" || key === "advances") {
           const cutoffDate = new Date(Date.now() - cachedRetentionDays * 24 * 60 * 60 * 1000).toISOString();
           data = data.filter(item => (item.clockIn || item.appliedAt || item.from) > cutoffDate);
         }
-        
         return data;
       }
-      return null;
     } catch (e) {
-      console.error("Firebase GET error:", e);
+      console.error(`Firebase GET error for ${key}:`, e);
       return undefined;
     }
   },
   async set(key, val) {
     try {
-      let dataToSave = val;
-      
-      if (key === "appSettings" && val && val.retentionDays) {
-        cachedRetentionDays = val.retentionDays;
+      if (key === "appSettings" || key === "ownerPass") {
+        if (key === "appSettings" && val && val.retentionDays) {
+          cachedRetentionDays = val.retentionDays;
+        }
+        await setDoc(doc(db, "amigos_store", key), { value: val }, { merge: true });
+      } else {
+        console.warn(`storage.set called on collection ${key}. Use add/update/remove instead.`);
       }
-      
-      // Auto-Cleanup
-      if (Array.isArray(val) && (key === "timelogs" || key === "leaves" || key === "advances")) {
-        const cutoffDate = new Date(Date.now() - cachedRetentionDays * 24 * 60 * 60 * 1000).toISOString();
-        dataToSave = val.filter(item => (item.clockIn || item.appliedAt || item.from) > cutoffDate);
-      }
-      
-      const docRef = doc(db, "amigos_store", key);
-      await setDoc(docRef, { value: dataToSave }, { merge: true });
     } catch (e) {
       console.error("Firebase SET error:", e);
     }
   },
+  async add(key, item) {
+    try { await setDoc(doc(db, key, item.id), item); } 
+    catch (e) { console.error(`Firebase ADD error:`, e); }
+  },
+  async update(key, id, updates) {
+    try { await setDoc(doc(db, key, id), updates, { merge: true }); } 
+    catch (e) { console.error(`Firebase UPDATE error:`, e); }
+  },
+  async remove(key, id) {
+    try { await deleteDoc(doc(db, key, id)); } 
+    catch (e) { console.error(`Firebase REMOVE error:`, e); }
+  }
 };
 
 // ── Seed data ──
@@ -679,8 +700,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
       return;
     }
     const updatedEmp = { ...employee, ...profileForm };
-    const newEmps = allEmps.map(e => e.id === employee.id ? updatedEmp : e);
-    await storage.set("employees", newEmps);
+    await storage.update("employees", employee.id, updatedEmp);
     if(onUpdateEmployee) onUpdateEmployee(updatedEmp);
     setProfileSaved(true);
     setTimeout(() => setProfileSaved(false), 3000);
@@ -697,7 +717,10 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
       const all = (await storage.get("timelogs")) || [];
       const autoClosed = applyAutoClockOut(all, st);
       if (autoClosed.changed) {
-        await storage.set("timelogs", autoClosed.logs);
+        await Promise.all(autoClosed.closed.map(l => storage.update("timelogs", l.id, {
+          clockOut: l.clockOut, breaks: l.breaks,
+          autoClockedOut: l.autoClockedOut, autoClockOutReason: l.autoClockOutReason
+        })));
       }
       const mine = autoClosed.logs.filter(l => l.employeeId === employee.id);
       setLogs(mine);
@@ -725,8 +748,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
       );
       if (onLeave) { alert("You are on approved leave today and cannot clock in."); return; }
       const log = { id: uid(), employeeId: employee.id, name: employee.name, clockIn: new Date().toISOString(), clockOut: null };
-      const all = (await storage.get("timelogs")) || [];
-      await storage.set("timelogs", [...all, log]);
+      await storage.add("timelogs", log);
       setLogs(p => [...p, log]);
       setActive(log);
     } finally {
@@ -750,8 +772,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
         }
       }
       const updated = { ...finalActive, clockOut: clockOutIso };
-      const all = (await storage.get("timelogs")) || [];
-      await storage.set("timelogs", all.map(l => l.id === active.id ? updated : l));
+      await storage.update("timelogs", active.id, { clockOut: clockOutIso, breaks: finalActive.breaks });
       setLogs(p => p.map(l => l.id === active.id ? updated : l));
       setActive(null);
     } finally {
@@ -764,8 +785,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
     try {
       const updatedBreaks = [...(active.breaks || []), { start: new Date().toISOString(), end: null }];
       const updated = { ...active, breaks: updatedBreaks };
-      const all = (await storage.get("timelogs")) || [];
-      await storage.set("timelogs", all.map(l => l.id === active.id ? updated : l));
+      await storage.update("timelogs", active.id, { breaks: updatedBreaks });
       setLogs(p => p.map(l => l.id === active.id ? updated : l));
       setActive(updated);
     } finally {
@@ -781,8 +801,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
         updatedBreaks[updatedBreaks.length - 1] = { ...updatedBreaks[updatedBreaks.length - 1], end: new Date().toISOString() };
       }
       const updated = { ...active, breaks: updatedBreaks };
-      const all = (await storage.get("timelogs")) || [];
-      await storage.set("timelogs", all.map(l => l.id === active.id ? updated : l));
+      await storage.update("timelogs", active.id, { breaks: updatedBreaks });
       setLogs(p => p.map(l => l.id === active.id ? updated : l));
       setActive(updated);
     } finally {
@@ -806,8 +825,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
       status: "pending",
       appliedAt: new Date().toISOString(),
     };
-    const allLeaves = (await storage.get("leaves")) || [];
-    await storage.set("leaves", [...allLeaves, req]);
+    await storage.add("leaves", req);
     setLeaves(p => [...p, req]);
     setLeaveForm({ from:"", to:"", type:"Casual", reason:"" });
     setLeaveSent(true);
@@ -831,8 +849,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
       status: "pending",
       appliedAt: new Date().toISOString(),
     };
-    const allAdvances = (await storage.get("advances")) || [];
-    await storage.set("advances", [...allAdvances, req]);
+    await storage.add("advances", req);
     setAdvances(p => [...p, req]);
     setAdvanceForm({ amount:"", reason:"" });
     setAdvanceSent(true);
@@ -1201,29 +1218,53 @@ function OwnerDashboard({ onLogout }) {
     return () => clearInterval(iv);
   }, []);
 
-  const load = useCallback(async () => {
-    const [emps, tlogs, lvs, advs, st] = await Promise.all([
-      storage.get("employees"),
-      storage.get("timelogs").then(d => d || []),
-      storage.get("leaves").then(d => d || []),
-      storage.get("advances").then(d => d || []),
-      storage.get("appSettings").then(d => ({ ...defaultSettings(), ...(d || {}) })),
-    ]);
-    if (!st.branches) st.branches = ["Mens", "Womens", "Crazo", "Warehouse"];
-    const autoClosed = applyAutoClockOut(tlogs, st);
-    if (autoClosed.changed) {
-      await storage.set("timelogs", autoClosed.logs);
-    }
-    if (emps === undefined) {
-      alert("Could not load staff data. Please check your connection before editing staff.");
-    }
-    setEmployees(Array.isArray(emps) ? emps : SEED_EMPLOYEES); setLogs(autoClosed.logs); setLeaves(lvs); setAdvances(advs); setSettings(st);
-    setRetentionDaysInput((st.retentionDays || 120).toString());
-    setLoading(false);
-  }, []);
+  useEffect(() => {
+    let currentSettings = settings;
+    let loadedCount = 0;
+    const checkLoaded = () => {
+      if (loadedCount < 5) {
+        loadedCount++;
+        if (loadedCount === 5) setLoading(false);
+      }
+    };
 
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { load(); }, [load]);
+    const unsubs = [
+      storage.subscribe("employees", (data) => {
+        setEmployees(Array.isArray(data) && data.length > 0 ? data : SEED_EMPLOYEES);
+        checkLoaded();
+      }),
+      storage.subscribe("appSettings", (data) => {
+        const st = { ...defaultSettings(), ...(data || {}) };
+        if (!st.branches) st.branches = ["Mens", "Womens", "Crazo", "Warehouse"];
+        currentSettings = st;
+        setSettings(st);
+        setRetentionDaysInput((st.retentionDays || 120).toString());
+        checkLoaded();
+      }),
+      storage.subscribe("timelogs", async (data) => {
+        const tlogs = data || [];
+        const autoClosed = applyAutoClockOut(tlogs, currentSettings);
+        if (autoClosed.changed) {
+          await Promise.all(autoClosed.closed.map(l => storage.update("timelogs", l.id, {
+            clockOut: l.clockOut, breaks: l.breaks,
+            autoClockedOut: l.autoClockedOut, autoClockOutReason: l.autoClockOutReason
+          })));
+        }
+        setLogs(autoClosed.logs);
+        checkLoaded();
+      }),
+      storage.subscribe("leaves", (data) => {
+        setLeaves(data || []);
+        checkLoaded();
+      }),
+      storage.subscribe("advances", (data) => {
+        setAdvances(data || []);
+        checkLoaded();
+      })
+    ];
+
+    return () => unsubs.forEach(unsub => unsub());
+  }, []);
 
   const currentWeekStart = useMemo(() => {
     const d = new Date(); d.setDate(d.getDate() - d.getDay()); d.setHours(0,0,0,0); return d;
@@ -1328,27 +1369,28 @@ function OwnerDashboard({ onLogout }) {
   const deleteLog = async (id) => {
     if (!window.confirm("Are you sure you want to delete this timesheet record?")) return;
     const n = logs.filter(l => l.id !== id);
-    await storage.set("timelogs", n); setLogs(n);
+    await storage.remove("timelogs", id); setLogs(n);
   };
 
   const approveLeave = async (id) => {
     const n = leaves.map(l => l.id === id ? {...l, status:"approved"} : l);
-    await storage.set("leaves", n); setLeaves(n);
+    await storage.update("leaves", id, { status:"approved" }); setLeaves(n);
   };
 
   const rejectLeave = async (id) => {
     const n = leaves.map(l => l.id === id ? {...l, status:"rejected"} : l);
-    await storage.set("leaves", n); setLeaves(n);
+    await storage.update("leaves", id, { status:"rejected" }); setLeaves(n);
   };
 
   const markAdvancePaid = async (id) => {
-    const n = advances.map(a => a.id === id ? {...a, status:"paid", paidAt: new Date().toISOString()} : a);
-    await storage.set("advances", n); setAdvances(n);
+    const paidAt = new Date().toISOString();
+    const n = advances.map(a => a.id === id ? {...a, status:"paid", paidAt} : a);
+    await storage.update("advances", id, { status:"paid", paidAt }); setAdvances(n);
   };
 
   const rejectAdvance = async (id) => {
     const n = advances.map(a => a.id === id ? {...a, status:"rejected"} : a);
-    await storage.set("advances", n); setAdvances(n);
+    await storage.update("advances", id, { status:"rejected" }); setAdvances(n);
   };
 
   const clockOutAllActive = async () => {
@@ -1356,7 +1398,9 @@ function OwnerDashboard({ onLogout }) {
     const nowIso = new Date().toISOString();
     const activeIds = new Set(filteredActiveSessions.map(s => s.id));
     const updatedLogs = logs.map(l => activeIds.has(l.id) ? { ...l, clockOut: nowIso, breaks: closeOpenBreaksAt(l, nowIso) } : l);
-    await storage.set("timelogs", updatedLogs);
+    await Promise.all(filteredActiveSessions.map(sess => 
+      storage.update("timelogs", sess.id, { clockOut: nowIso, breaks: closeOpenBreaksAt(sess, nowIso) })
+    ));
     setLogs(updatedLogs);
   };
 
@@ -1364,7 +1408,8 @@ function OwnerDashboard({ onLogout }) {
     if (!window.confirm(`Are you sure you want to clock out ${name}?`)) return;
     const nowIso = new Date().toISOString();
     const updatedLogs = logs.map(l => l.id === id ? { ...l, clockOut: nowIso, breaks: closeOpenBreaksAt(l, nowIso) } : l);
-    await storage.set("timelogs", updatedLogs);
+    const l = logs.find(l => l.id === id);
+    await storage.update("timelogs", id, { clockOut: nowIso, breaks: closeOpenBreaksAt(l, nowIso) });
     setLogs(updatedLogs);
   };
 
@@ -1399,10 +1444,13 @@ function OwnerDashboard({ onLogout }) {
     const cleanedLogs = keepRecent(logRecords);
     const cleanedLeaves = keepRecent(leaveRecords);
     const cleanedAdvances = keepRecent(advanceRecords);
+    const deletedLogs = logRecords.filter(item => !cleanedLogs.includes(item));
+    const deletedLeaves = leaveRecords.filter(item => !cleanedLeaves.includes(item));
+    const deletedAdvances = advanceRecords.filter(item => !cleanedAdvances.includes(item));
     await Promise.all([
-      storage.set("timelogs", cleanedLogs),
-      storage.set("leaves", cleanedLeaves),
-      storage.set("advances", cleanedAdvances),
+      ...deletedLogs.map(l => storage.remove("timelogs", l.id)),
+      ...deletedLeaves.map(l => storage.remove("leaves", l.id)),
+      ...deletedAdvances.map(a => storage.remove("advances", a.id)),
     ]);
     setLogs(cleanedLogs);
     setLeaves(cleanedLeaves);
@@ -1419,8 +1467,8 @@ function OwnerDashboard({ onLogout }) {
     if (!Array.isArray(latestEmployees)) { alert("Could not load staff data. Please check your connection and try again."); return; }
     const updatedBranches = settings.branches.map(b => b === oldName ? nb : b);
     const updatedEmployees = latestEmployees.map(e => e.branch === oldName ? { ...e, branch: nb } : e);
-    
-    await storage.set("employees", updatedEmployees);
+    const changedEmps = latestEmployees.filter(e => e.branch === oldName);
+    await Promise.all(changedEmps.map(e => storage.update("employees", e.id, { branch: nb })));
     setEmployees(updatedEmployees);
     updateSettings({ branches: updatedBranches });
     setEditingBranch(null);
@@ -1434,8 +1482,8 @@ function OwnerDashboard({ onLogout }) {
     if (!Array.isArray(latestEmployees)) { alert("Could not load staff data. Please check your connection and try again."); return; }
     const updatedBranches = settings.branches.filter(b => b !== branchName);
     const updatedEmployees = latestEmployees.map(e => e.branch === branchName ? { ...e, branch: "" } : e);
-    
-    await storage.set("employees", updatedEmployees);
+    const changedEmps = latestEmployees.filter(e => e.branch === branchName);
+    await Promise.all(changedEmps.map(e => storage.update("employees", e.id, { branch: "" })));
     setEmployees(updatedEmployees);
     updateSettings({ branches: updatedBranches });
     if (selectedBranch === branchName) setSelectedBranch("All");
@@ -2485,12 +2533,13 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
     let updated;
     const baseEmp = { ...form, hourlyRate: parseFloat(form.hourlyRate)||0, dailySalary: parseFloat(form.dailySalary)||0, standardHours: parseFloat(form.standardHours)||10 };
     if (editingId) {
+      await storage.update("employees", editingId, baseEmp);
       updated = currentEmployees.map(e => e.id === editingId ? { ...e, ...baseEmp } : e);
     } else {
       const emp = { id: uid(), ...baseEmp };
+      await storage.add("employees", emp);
       updated = [...currentEmployees, emp];
     }
-    await storage.set("employees", updated);
     setEmployees(updated);
     setForm({name:"",pin:"",employmentType:"Full-time",standardHours:"10",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly", phone:"", email:"", gender:"", address:""});
     setAdding(false); setEditingId(null); setErr(""); setConfirmRemoveId(null);
@@ -2500,17 +2549,17 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
     const latestEmployees = await storage.get("employees");
     if (!Array.isArray(latestEmployees)) { alert("Could not load staff data. Please check your connection and try again."); return; }
     const updated = latestEmployees.filter(e=>e.id!==id);
-    await storage.set("employees", updated);
+    await storage.remove("employees", id);
     setEmployees(updated);
     setConfirmRemoveId(null);
     
-    // Deep cleanup: Remove associated timesheets and leave requests
+    // Deep cleanup
     const allLogs = await storage.get("timelogs") || [];
-    await storage.set("timelogs", allLogs.filter(l => l.employeeId !== id));
+    await Promise.all(allLogs.filter(l => l.employeeId === id).map(l => storage.remove("timelogs", l.id)));
     const allLeaves = await storage.get("leaves") || [];
-    await storage.set("leaves", allLeaves.filter(l => l.employeeId !== id));
+    await Promise.all(allLeaves.filter(l => l.employeeId === id).map(l => storage.remove("leaves", l.id)));
     const allAdvances = await storage.get("advances") || [];
-    await storage.set("advances", allAdvances.filter(a => a.employeeId !== id));
+    await Promise.all(allAdvances.filter(a => a.employeeId === id).map(a => storage.remove("advances", a.id)));
   };
 
   const edit = (emp) => {
