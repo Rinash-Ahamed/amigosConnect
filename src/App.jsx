@@ -105,9 +105,17 @@ const fmtDate = (iso) => {
   if (!iso) return "—";
   return new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 };
-const hoursWorked = (clockIn, clockOut) => {
+const hoursWorked = (clockIn, clockOut, breaks = []) => {
   if (!clockIn || !clockOut) return 0;
   let totalMs = new Date(clockOut) - new Date(clockIn);
+  
+  if (Array.isArray(breaks)) {
+    breaks.forEach(b => {
+      if (b.start && b.end) {
+        totalMs -= (new Date(b.end) - new Date(b.start));
+      }
+    });
+  }
   return Math.max(0, Math.round((totalMs / 3600000) * 100) / 100);
 };
 const totalHours = (logs) =>
@@ -854,7 +862,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
     const logsByDay = Object.fromEntries(data.map(day => [day.dateKey, day]));
     weekLogs.filter(l => l.clockOut).forEach(l => {
       const d = new Date(l.clockIn).toDateString();
-      if (logsByDay[d]) logsByDay[d].Hours += hoursWorked(l.clockIn, l.clockOut);
+      if (logsByDay[d]) logsByDay[d].Hours += hoursWorked(l.clockIn, l.clockOut, l.breaks);
     });
     data.forEach(day => {
       day.Hours = Math.round(day.Hours * 10) / 10;
@@ -1000,7 +1008,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
                   </div>
                   <div>
                     {l.clockOut
-                      ? <span className="tag tag-green">{hoursWorked(l.clockIn,l.clockOut).toFixed(1)} hrs</span>
+                      ? <span className="tag tag-green">{hoursWorked(l.clockIn,l.clockOut,l.breaks).toFixed(1)} hrs</span>
                       : <span className="tag tag-gold" style={{animation:"dot-blink 1.4s infinite"}}>● Active</span>}
                   </div>
                 </div>
@@ -1452,7 +1460,7 @@ function OwnerDashboard({ onLogout }) {
       const date = new Date(log.clockIn).toDateString();
       workedDays.add(date);
       if (!dailyHours[date]) { dailyHours[date] = 0; }
-      dailyHours[date] += hoursWorked(log.clockIn, log.clockOut);
+      dailyHours[date] += hoursWorked(log.clockIn, log.clockOut, log.breaks);
     });
 
     details.daysWorked = workedDays.size;
@@ -1477,7 +1485,7 @@ function OwnerDashboard({ onLogout }) {
     const rows = [["Employee","Branch","Date","Clock In","Clock Out","Hours"]];
     timesheetEmployees.forEach(emp => {
       getTsLogs(emp.id).forEach(l => {
-        const h = hoursWorked(l.clockIn, l.clockOut);
+        const h = hoursWorked(l.clockIn, l.clockOut, l.breaks);
         rows.push([emp.name, emp.branch || "—", fmtDate(l.clockIn), fmt(l.clockIn), l.clockOut ? fmt(l.clockOut) : "Open", h.toFixed(2)]);
       });
     });
