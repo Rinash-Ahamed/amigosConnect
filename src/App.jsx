@@ -78,6 +78,24 @@ const SUPER_PASSWORD = "superadmin123";
 
 const getOwnerPass = async () => (await storage.get("ownerPass")) || "admin123";
 
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+const DEFAULT_AUTO_CLOCK_OUT_HOUR_IST = 23;
+const DEFAULT_AUTO_CLOCK_OUT_MINUTE_IST = 0;
+const defaultSettings = () => ({
+  leavesEnabled: true,
+  autoClockOutEnabled: true,
+  autoClockOutHourIst: DEFAULT_AUTO_CLOCK_OUT_HOUR_IST,
+  autoClockOutMinuteIst: DEFAULT_AUTO_CLOCK_OUT_MINUTE_IST,
+});
+const to12HourParts = (hour24) => ({
+  hour: hour24 % 12 || 12,
+  period: hour24 >= 12 ? "PM" : "AM",
+});
+const to24Hour = (hour12, period) => {
+  const normalized = Number(hour12) % 12;
+  return period === "PM" ? normalized + 12 : normalized;
+};
+
 // ── Utilities ──
 const fmt = (iso) => {
   if (!iso) return "—";
@@ -95,6 +113,59 @@ const hoursWorked = (clockIn, clockOut) => {
 const totalHours = (logs) =>
   logs.reduce((s, l) => s + hoursWorked(l.clockIn, l.clockOut, l.breaks), 0);
 const uid = () => Math.random().toString(36).slice(2, 10);
+const getAutoClockOutIso = (
+  clockInIso,
+  hourIst = DEFAULT_AUTO_CLOCK_OUT_HOUR_IST,
+  minuteIst = DEFAULT_AUTO_CLOCK_OUT_MINUTE_IST
+) => {
+  if (!clockInIso) return null;
+  const clockIn = new Date(clockInIso);
+  if (Number.isNaN(clockIn.getTime())) return null;
+
+  const clockInIst = new Date(clockIn.getTime() + IST_OFFSET_MS);
+  let autoUtcMs = Date.UTC(
+    clockInIst.getUTCFullYear(),
+    clockInIst.getUTCMonth(),
+    clockInIst.getUTCDate(),
+    hourIst,
+    minuteIst,
+    0,
+    0
+  ) - IST_OFFSET_MS;
+
+  if (clockIn.getTime() >= autoUtcMs) autoUtcMs += 24 * 60 * 60 * 1000;
+  return new Date(autoUtcMs).toISOString();
+};
+const closeOpenBreaksAt = (log, clockOutIso) => {
+  if (!Array.isArray(log.breaks) || log.breaks.length === 0) return log.breaks;
+  return log.breaks.map((br, idx) =>
+    idx === log.breaks.length - 1 && !br.end ? { ...br, end: clockOutIso } : br
+  );
+};
+const applyAutoClockOut = (logs, settings, now = new Date()) => {
+  if (settings?.autoClockOutEnabled === false || !Array.isArray(logs)) {
+    return { logs, changed: false, closed: [] };
+  }
+
+  const closed = [];
+  const hourIst = settings?.autoClockOutHourIst ?? DEFAULT_AUTO_CLOCK_OUT_HOUR_IST;
+  const minuteIst = settings?.autoClockOutMinuteIst ?? DEFAULT_AUTO_CLOCK_OUT_MINUTE_IST;
+  const updatedLogs = logs.map(log => {
+    if (log.clockOut) return log;
+    const autoClockOutIso = getAutoClockOutIso(log.clockIn, hourIst, minuteIst);
+    if (!autoClockOutIso || new Date(autoClockOutIso) > now) return log;
+    closed.push(log);
+    return {
+      ...log,
+      clockOut: autoClockOutIso,
+      breaks: closeOpenBreaksAt(log, autoClockOutIso),
+      autoClockedOut: true,
+      autoClockOutReason: `${String(hourIst).padStart(2, "0")}:${String(minuteIst).padStart(2, "0")} IST default close`,
+    };
+  });
+
+  return { logs: updatedLogs, changed: closed.length > 0, closed };
+};
 const csvCell = (value) => {
   const text = value === undefined || value === null || value === "" ? "-" : String(value);
   return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
@@ -327,9 +398,21 @@ const GlobalStyle = () => (
         justify-content: center;
         margin-left: 0 !important;
       }
-      .mobile-export-btn {
-        flex: 1 1 100%;
-        justify-content: center;
+    .mobile-export-btn {
+      flex: 1 1 100%;
+      justify-content: center;
+    }
+      .mobile-stack-grid {
+        grid-template-columns: 1fr !important;
+      }
+      .mobile-full {
+        width: 100%;
+        flex: 1 1 100% !important;
+        max-width: none !important;
+      }
+      .mobile-left {
+        text-align: left !important;
+        margin-left: 0 !important;
       }
     }
   `}</style>
@@ -379,7 +462,6 @@ function PinPad({ value, onChange, maxLen = 4 }) {
 function LoginScreen({ onLogin }) {
   const detectIOS = () => typeof window !== "undefined" && /iphone|ipad|ipod/.test(window.navigator.userAgent.toLowerCase());
   const detectStandalone = () => typeof window !== "undefined" && ("standalone" in window.navigator) && window.navigator.standalone;
-  const detectWindows = () => typeof window !== "undefined" && /windows/i.test(window.navigator.userAgent);
   const [mode, setMode] = useState(null);
   const [pin, setPin] = useState("");
   const [pass, setPass] = useState("");
@@ -389,7 +471,6 @@ function LoginScreen({ onLogin }) {
   const [installPrompt, setInstallPrompt] = useState(null);
   const [isIOS] = useState(detectIOS);
   const [isStandalone] = useState(detectStandalone);
-  const [isWindowsOS] = useState(detectWindows);
   const [showPass, setShowPass] = useState(false);
 
   useEffect(() => {
@@ -565,7 +646,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
   const [leaveForm, setLeaveForm] = useState({ from:"", to:"", type:"Casual", reason:"" });
   const [leaveErr, setLeaveErr] = useState("");
   const [leaveSent, setLeaveSent] = useState(false);
-  const [settings, setSettings] = useState({ leavesEnabled: true });
+  const [settings, setSettings] = useState(defaultSettings());
   const [advances, setAdvances] = useState([]);
   const [advanceForm, setAdvanceForm] = useState({ amount: "", reason: "" });
   const [advanceErr, setAdvanceErr] = useState("");
@@ -604,8 +685,13 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
 
   useEffect(() => {
     (async () => {
+      const st = { ...defaultSettings(), ...((await storage.get("appSettings")) || {}) };
       const all = (await storage.get("timelogs")) || [];
-      const mine = all.filter(l => l.employeeId === employee.id);
+      const autoClosed = applyAutoClockOut(all, st);
+      if (autoClosed.changed) {
+        await storage.set("timelogs", autoClosed.logs);
+      }
+      const mine = autoClosed.logs.filter(l => l.employeeId === employee.id);
       setLogs(mine);
       const open = mine.find(l => !l.clockOut);
       setActive(open || null);
@@ -614,11 +700,8 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
       const allAdvances = (await storage.get("advances")) || [];
       setAdvances(allAdvances.filter(a => a.employeeId === employee.id));
       
-      const st = await storage.get("appSettings");
-      if (st) {
-        setSettings(st);
-        if (st.leavesEnabled === false && view === "leave") setView("home");
-      }
+      setSettings(st);
+      if (st.leavesEnabled === false && view === "leave") setView("home");
     })();
   }, [employee.id, view]);
 
@@ -648,16 +731,17 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
     setClocking(true);
     try {
       let finalActive = { ...active };
+      const clockOutIso = new Date().toISOString();
       // auto-end any open break
       if (finalActive.breaks && finalActive.breaks.length > 0) {
         const lastBreak = finalActive.breaks[finalActive.breaks.length - 1];
         if (!lastBreak.end) {
           const updatedBreaks = [...finalActive.breaks];
-          updatedBreaks[updatedBreaks.length - 1] = { ...lastBreak, end: new Date().toISOString() };
+          updatedBreaks[updatedBreaks.length - 1] = { ...lastBreak, end: clockOutIso };
           finalActive.breaks = updatedBreaks;
         }
       }
-      const updated = { ...finalActive, clockOut: new Date().toISOString() };
+      const updated = { ...finalActive, clockOut: clockOutIso };
       const all = (await storage.get("timelogs")) || [];
       await storage.set("timelogs", all.map(l => l.id === active.id ? updated : l));
       setLogs(p => p.map(l => l.id === active.id ? updated : l));
@@ -930,7 +1014,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
             {/* Apply leave form */}
             <div className="card-glow" style={{marginBottom:16}}>
               <h3 style={{fontSize:17,color:"var(--gold)",marginBottom:16}}>Apply for Leave</h3>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+              <div className="mobile-stack-grid" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
                 <div>
                   <label className="field-label">From Date</label>
                   <input type="date" className="input" value={leaveForm.from}
@@ -996,7 +1080,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
           <div className="fade-up">
             <div className="card-glow" style={{marginBottom:16, textAlign: "left"}}>
               <h3 style={{fontSize:17,color:"var(--gold)",marginBottom:16}}>My Profile</h3>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+              <div className="mobile-stack-grid" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
                 <div>
                   <label className="field-label">Phone Number</label>
                   <input type="tel" className="input" placeholder="e.g. 9876543210" value={profileForm.phone}
@@ -1090,7 +1174,7 @@ function OwnerDashboard({ onLogout }) {
   const [newBranch, setNewBranch] = useState("");
   const [editingBranch, setEditingBranch] = useState(null);
   const [editBranchValue, setEditBranchValue] = useState("");
-  const [settings, setSettings] = useState({ leavesEnabled: true });
+  const [settings, setSettings] = useState(defaultSettings());
   const [tsMode, setTsMode] = useState("weekly");
   const [tsOffset, setTsOffset] = useState(0);
   const [timesheetSearch, setTimesheetSearch] = useState("");
@@ -1115,13 +1199,17 @@ function OwnerDashboard({ onLogout }) {
       storage.get("timelogs").then(d => d || []),
       storage.get("leaves").then(d => d || []),
       storage.get("advances").then(d => d || []),
-      storage.get("appSettings").then(d => d || { leavesEnabled: true }),
+      storage.get("appSettings").then(d => ({ ...defaultSettings(), ...(d || {}) })),
     ]);
     if (!st.branches) st.branches = ["Mens", "Womens", "Crazo", "Warehouse"];
+    const autoClosed = applyAutoClockOut(tlogs, st);
+    if (autoClosed.changed) {
+      await storage.set("timelogs", autoClosed.logs);
+    }
     if (emps === undefined) {
       alert("Could not load staff data. Please check your connection before editing staff.");
     }
-    setEmployees(Array.isArray(emps) ? emps : SEED_EMPLOYEES); setLogs(tlogs); setLeaves(lvs); setAdvances(advs); setSettings(st);
+    setEmployees(Array.isArray(emps) ? emps : SEED_EMPLOYEES); setLogs(autoClosed.logs); setLeaves(lvs); setAdvances(advs); setSettings(st);
     setRetentionDaysInput((st.retentionDays || 120).toString());
     setLoading(false);
   }, []);
@@ -1259,7 +1347,7 @@ function OwnerDashboard({ onLogout }) {
     if (!window.confirm(`Are you sure you want to clock out all ${filteredActiveSessions.length} active employees?`)) return;
     const nowIso = new Date().toISOString();
     const activeIds = new Set(filteredActiveSessions.map(s => s.id));
-    const updatedLogs = logs.map(l => activeIds.has(l.id) ? { ...l, clockOut: nowIso } : l);
+    const updatedLogs = logs.map(l => activeIds.has(l.id) ? { ...l, clockOut: nowIso, breaks: closeOpenBreaksAt(l, nowIso) } : l);
     await storage.set("timelogs", updatedLogs);
     setLogs(updatedLogs);
   };
@@ -1267,7 +1355,7 @@ function OwnerDashboard({ onLogout }) {
   const clockOutSingle = async (id, name) => {
     if (!window.confirm(`Are you sure you want to clock out ${name}?`)) return;
     const nowIso = new Date().toISOString();
-    const updatedLogs = logs.map(l => l.id === id ? { ...l, clockOut: nowIso } : l);
+    const updatedLogs = logs.map(l => l.id === id ? { ...l, clockOut: nowIso, breaks: closeOpenBreaksAt(l, nowIso) } : l);
     await storage.set("timelogs", updatedLogs);
     setLogs(updatedLogs);
   };
@@ -1276,6 +1364,42 @@ function OwnerDashboard({ onLogout }) {
     const updated = { ...settings, ...newSt };
     setSettings(updated);
     await storage.set("appSettings", updated);
+  };
+
+  const runImmediateCleanup = async () => {
+    const days = parseInt(settings.retentionDays || 120, 10);
+    if (isNaN(days) || days < 1) {
+      alert("Please save a valid retention period before cleanup.");
+      return;
+    }
+    if (!window.confirm(`Clean up records older than ${days} days now?\n\nThis will permanently remove old Timesheets, Leaves, and Advances only.\n\nEmployee/staff details, PINs, branches, salary settings, and app settings will NOT be removed.`)) return;
+
+    const cutoffDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    const keepRecent = (items) => (Array.isArray(items) ? items : []).filter(item => (item.clockIn || item.appliedAt || item.from) > cutoffDate);
+    const [allLogs, allLeaves, allAdvances] = await Promise.all([
+      storage.get("timelogs"),
+      storage.get("leaves"),
+      storage.get("advances"),
+    ]);
+    if (allLogs === undefined || allLeaves === undefined || allAdvances === undefined) {
+      alert("Cleanup cancelled because some records could not be loaded. Please check your connection and try again.");
+      return;
+    }
+    const logRecords = Array.isArray(allLogs) ? allLogs : [];
+    const leaveRecords = Array.isArray(allLeaves) ? allLeaves : [];
+    const advanceRecords = Array.isArray(allAdvances) ? allAdvances : [];
+    const cleanedLogs = keepRecent(logRecords);
+    const cleanedLeaves = keepRecent(leaveRecords);
+    const cleanedAdvances = keepRecent(advanceRecords);
+    await Promise.all([
+      storage.set("timelogs", cleanedLogs),
+      storage.set("leaves", cleanedLeaves),
+      storage.set("advances", cleanedAdvances),
+    ]);
+    setLogs(cleanedLogs);
+    setLeaves(cleanedLeaves);
+    setAdvances(cleanedAdvances);
+    alert(`Cleanup complete.\n\nRemoved ${logRecords.length - cleanedLogs.length} timesheet records, ${leaveRecords.length - cleanedLeaves.length} leave records, and ${advanceRecords.length - cleanedAdvances.length} advance records.\n\nEmployee/staff details were not removed.`);
   };
 
   const saveEditBranch = async (oldName) => {
@@ -1533,7 +1657,12 @@ function OwnerDashboard({ onLogout }) {
           )}
           {pendingLeaves.length > 0 && (
             <div style={{background:"var(--amber-bg)",border:"1px solid rgba(245,158,11,.2)",borderRadius:20,padding:"4px 10px",whiteSpace:"nowrap"}}>
-              <span style={{fontSize:12,color:"var(--amber)",fontWeight:500}}><Flag size={12} style={{verticalAlign:"middle", marginTop:"-2px"}}/> {pendingLeaves.length} pending</span>
+              <span style={{fontSize:12,color:"var(--amber)",fontWeight:500}}><Flag size={12} style={{verticalAlign:"middle", marginTop:"-2px"}}/> {pendingLeaves.length} leave pending</span>
+            </div>
+          )}
+          {pendingAdvances.length > 0 && (
+            <div style={{background:"var(--amber-bg)",border:"1px solid rgba(245,158,11,.2)",borderRadius:20,padding:"4px 10px",whiteSpace:"nowrap"}}>
+              <span style={{fontSize:12,color:"var(--amber)",fontWeight:500}}><IndianRupee size={12} style={{verticalAlign:"middle", marginTop:"-2px"}}/> {pendingAdvances.length} advance pending</span>
             </div>
           )}
           <button className="btn btn-outline btn-sm" style={{flexShrink:0}} onClick={onLogout}>Sign Out</button>
@@ -1668,7 +1797,7 @@ function OwnerDashboard({ onLogout }) {
         {tab === "live" && (
           <div className="fade-up">
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20,flexWrap:"wrap",gap:12}}>
-              <div style={{display:"flex",alignItems:"center",gap:16}}>
+              <div style={{display:"flex",alignItems:"center",gap:16,flexWrap:"wrap"}}>
                 <h3 style={{fontSize:20,marginBottom:0}}>Live Clock Activity</h3>
                 <select className="input" style={{width:"auto", padding:"4px 10px", marginBottom:0, background:"var(--card-2)", border:"1px solid var(--border)", color:"var(--gold)", fontSize:13}} value={liveEmpTypeFilter} onChange={e => setLiveEmpTypeFilter(e.target.value)}>
                   <option value="All">All Types</option>
@@ -1693,7 +1822,7 @@ function OwnerDashboard({ onLogout }) {
             {/* Active sessions */}
             <div style={{marginBottom:24}}>
               <p style={{fontSize:12,color:"var(--muted)",textTransform:"uppercase",letterSpacing:".1em",marginBottom:12,fontWeight:500}}>
-                Currently Clocked In ({filteredActiveSessions.length})
+                Not Clocked Out / Currently Clocked In ({filteredActiveSessions.length})
               </p>
               {filteredActiveSessions.length === 0 && (
                 <div className="card" style={{textAlign:"center",padding:"28px",color:"var(--muted)",fontSize:13}}>
@@ -1712,7 +1841,7 @@ function OwnerDashboard({ onLogout }) {
                     boxShadow:"0 0 24px rgba(62,207,122,.07)",
                     display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:12
                   }}>
-                    <div style={{display:"flex",alignItems:"center",gap:12}}>
+                    <div style={{display:"flex",alignItems:"center",gap:12,minWidth:0,flex:"1 1 220px"}}>
                       <div style={{
                         width:44,height:44,borderRadius:13,background:"var(--success-bg)",
                         border:"1px solid rgba(62,207,122,.25)",
@@ -1720,12 +1849,12 @@ function OwnerDashboard({ onLogout }) {
                       }}>
                         <span className="live-dot" style={{width:12,height:12}}/>
                       </div>
-                      <div style={{textAlign: "left"}}>
+                      <div style={{textAlign: "left",minWidth:0}}>
                         <p style={{fontWeight:600}}>{sess.name}</p>
                         <p style={{fontSize:12,color:"var(--muted)"}}>{emp?.role} {emp?.branch ? `· ${emp.branch}` : ""} · {emp?.employmentType || "Full-time"} · Clocked in <strong style={{color:"var(--text-2)"}}>{fmtDate(sess.clockIn)} {fmt(sess.clockIn)}</strong></p>
                       </div>
                     </div>
-                    <div style={{textAlign:"right"}}>
+                    <div className="mobile-left" style={{textAlign:"right",flex:"1 1 150px"}}>
                       <div style={{fontSize:26,fontFamily:"'Playfair Display',serif",color:"var(--success)",fontWeight:600,letterSpacing:"0.05em"}}>{eStr}</div>
                       <div style={{fontSize:12,color:"var(--muted)", marginBottom: 8}}>₹{((hrs) * (emp?.hourlyRate || 0)).toFixed(2)} earned</div>
                       <button className="btn btn-outline btn-xs" onClick={() => clockOutSingle(sess.id, sess.name)}>
@@ -1748,13 +1877,13 @@ function OwnerDashboard({ onLogout }) {
             const h = hoursWorked(l.clockIn, l.clockOut, l.breaks);
                 return (
                   <div key={l.id} className="card" style={{marginBottom:10,display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10}}>
-                    <div style={{textAlign: "left"}}>
+                    <div style={{textAlign: "left",minWidth:0,flex:"1 1 220px"}}>
                       <p style={{fontWeight:600,fontSize:14}}>{l.name}</p>
                       <p style={{fontSize:12,color:"var(--muted)"}}>
                         {fmt(l.clockIn)} → {fmt(l.clockOut)} &nbsp;·&nbsp; {emp?.role} {emp?.branch ? `· ${emp.branch}` : ""} · {emp?.employmentType || "Full-time"}
                       </p>
                     </div>
-                    <div style={{display:"flex",gap:10,alignItems:"center"}}>
+                    <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
                       <span className="tag tag-green">{h.toFixed(1)} hrs</span>
                       <span style={{fontSize:13,color:"var(--gold)",fontWeight:600}}>₹{(h * (emp?.hourlyRate||0)).toFixed(2)}</span>
                     </div>
@@ -1834,7 +1963,7 @@ function OwnerDashboard({ onLogout }) {
                           <span style={{color:"var(--muted)", fontSize:12}}>{fmtDate(l.clockIn)}</span>
                           <span style={{fontWeight:500}}>{fmt(l.clockIn)} → {l.clockOut ? fmt(l.clockOut) : <span style={{color:"var(--success)"}}>Active</span>}</span>
                         </div>
-                        <div style={{display:"flex", alignItems:"center", gap:12, marginLeft:"auto"}}>
+                        <div className="mobile-left" style={{display:"flex", alignItems:"center", gap:12, marginLeft:"auto",flexWrap:"wrap"}}>
                           <span style={{color:"var(--gold)", fontWeight:600}}>{l.clockOut ? `${hoursWorked(l.clockIn,l.clockOut,l.breaks).toFixed(1)}h` : "—"}</span>
                           <button className="btn btn-danger btn-xs" onClick={() => deleteLog(l.id)}><X size={12}/></button>
                         </div>
@@ -1896,11 +2025,11 @@ function OwnerDashboard({ onLogout }) {
                 const net = gross - advance;
                 return (
                   <div key={emp.id} className="card" style={{display:"flex", flexWrap:"wrap", gap:16}}>
-                    <div style={{flex:"1 1 200px"}}>
+                    <div style={{flex:"1 1 200px",minWidth:0}}>
                       <div style={{fontWeight:600,marginBottom:4}}>{emp.name}</div>
                       <div style={{fontSize:12,color:"var(--muted)", lineHeight:1.5}}>{emp.branch ? `${emp.branch} · ` : ""}{emp.paymentCycle || "Weekly"} · {payroll.daysWorked} days · {payroll.totalHours.toFixed(2)} hrs ({payroll.overtimeHours.toFixed(2)} OT, {payroll.deficitHours.toFixed(2)} Deficit) · ₹{emp.hourlyRate||0}/hr</div>
                     </div>
-                    <div style={{flex:"0 1 auto", marginLeft:"auto", minWidth:"140px", textAlign:"right"}}>
+                    <div className="mobile-left" style={{flex:"0 1 auto", marginLeft:"auto", minWidth:"140px", textAlign:"right"}}>
                       <div style={{fontSize:13,color:"var(--muted)",fontWeight:500,marginBottom:4}}>Gross: ₹{gross.toFixed(2)}</div>
                       <div style={{fontSize:26,fontFamily:"'Playfair Display',serif",color:"var(--gold)",fontWeight:700,lineHeight:1}}>₹{net.toFixed(2)}</div>
                       {advance > 0 && <div style={{fontSize:12,color:"var(--danger)",fontWeight:500,marginTop:4}}>Advances: -₹{advance.toFixed(2)}</div>}
@@ -1916,7 +2045,7 @@ function OwnerDashboard({ onLogout }) {
                 <p style={{color:"var(--muted)",fontSize:13, marginBottom:4}}>Total Net {prMode==="weekly"?"Weekly":"Monthly"} Payroll</p>
                 <p style={{color:"var(--text-2)",fontSize:12}}>{totalPrHrs.toFixed(2)} hrs · {prEmployees.length} staff</p>
               </div>
-              <div style={{flex:"0 1 auto", marginLeft:"auto", textAlign:"right"}}>
+              <div className="mobile-left" style={{flex:"0 1 auto", marginLeft:"auto", textAlign:"right"}}>
                 <div style={{fontSize:14,color:"var(--muted)",fontWeight:500,marginBottom:6}}>Gross: ₹{totalPrGross.toFixed(2)} {totalPrAdvance > 0 && <span style={{color:"var(--danger)"}}>| Adv: -₹{totalPrAdvance.toFixed(2)}</span>}</div>
                 <div style={{fontSize:36,fontFamily:"'Playfair Display',serif",color:"var(--gold)",fontWeight:700,lineHeight:1}}>₹{totalPrPay.toFixed(2)}</div>
               </div>
@@ -1926,7 +2055,7 @@ function OwnerDashboard({ onLogout }) {
 
         {/* ── REQUESTS ── */}
         {tab === "requests" && (
-          <div className="fade-up">
+          <div className="fade-up" style={{textAlign:"left"}}>
             <h3 style={{fontSize:20,marginBottom:20,textAlign:"left"}}>Leave Requests</h3>
 
             {/* Pending */}
@@ -1941,8 +2070,8 @@ function OwnerDashboard({ onLogout }) {
                     padding:"16px 20px",marginBottom:10,
                     boxShadow:"0 0 20px rgba(245,158,11,.06)"
                   }}>
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
-                      <div>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10,gap:12,flexWrap:"wrap"}}>
+                      <div style={{textAlign:"left",flex:"1 1 220px",minWidth:0}}>
                         <p style={{fontWeight:600,fontSize:15}}>{l.name}</p>
                         <p style={{fontSize:13,color:"var(--text-2)",marginTop:2}}>
                           {new Date(l.from).toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}
@@ -1952,9 +2081,9 @@ function OwnerDashboard({ onLogout }) {
                       </div>
                       <span className="tag tag-amber">{l.type}</span>
                     </div>
-                    <div style={{display:"flex",gap:8}}>
-                      <button className="btn btn-success btn-sm" style={{flex:1}} onClick={() => approveLeave(l.id)}><Check size={14}/> Approve</button>
-                      <button className="btn btn-danger btn-sm" style={{flex:1}} onClick={() => rejectLeave(l.id)}><X size={14}/> Reject</button>
+                    <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                      <button className="btn btn-success btn-sm" style={{flex:"1 1 120px"}} onClick={() => approveLeave(l.id)}><Check size={14}/> Approve</button>
+                      <button className="btn btn-danger btn-sm" style={{flex:"1 1 120px"}} onClick={() => rejectLeave(l.id)}><X size={14}/> Reject</button>
                     </div>
                   </div>
                 ))}
@@ -1969,7 +2098,7 @@ function OwnerDashboard({ onLogout }) {
                   </p>
                 {[...approvedLeaves].reverse().map(l => (
                   <div key={l.id} className="card" style={{marginBottom:10,display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:10}}>
-                    <div>
+                    <div style={{textAlign:"left",flex:"1 1 220px",minWidth:0}}>
                       <p style={{fontWeight:600,fontSize:14}}>{l.name}</p>
                       <p style={{fontSize:12,color:"var(--muted)"}}>
                         {new Date(l.from).toLocaleDateString("en-GB",{day:"numeric",month:"short"})}
@@ -1977,7 +2106,7 @@ function OwnerDashboard({ onLogout }) {
                         &nbsp;·&nbsp;{l.reason}
                       </p>
                     </div>
-                    <div style={{display:"flex",gap:6}}>
+                    <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
                       <span className={`tag ${({Casual:"tag-blue",Sick:"tag-red",Emergency:"tag-amber"}[l.type]||"tag-muted")}`}>{l.type}</span>
                       <span className="tag tag-green">Approved</span>
                     </div>
@@ -1994,7 +2123,7 @@ function OwnerDashboard({ onLogout }) {
                 </p>
                 {[...rejectedLeaves].reverse().map(l => (
                   <div key={l.id} className="card" style={{marginBottom:10,display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:10}}>
-                    <div>
+                    <div style={{textAlign:"left",flex:"1 1 220px",minWidth:0}}>
                       <p style={{fontWeight:600,fontSize:14}}>{l.name}</p>
                       <p style={{fontSize:12,color:"var(--muted)"}}>
                         {new Date(l.from).toLocaleDateString("en-GB",{day:"numeric",month:"short"})}
@@ -2002,7 +2131,7 @@ function OwnerDashboard({ onLogout }) {
                         &nbsp;·&nbsp;{l.reason}
                       </p>
                     </div>
-                    <div style={{display:"flex",gap:6}}>
+                    <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
                       <span className={`tag ${({Casual:"tag-blue",Sick:"tag-red",Emergency:"tag-amber"}[l.type]||"tag-muted")}`}>{l.type}</span>
                       <span className="tag tag-red">Declined</span>
                     </div>
@@ -2030,17 +2159,17 @@ function OwnerDashboard({ onLogout }) {
                   <div key={a.id} style={{
                     background:"var(--card)",border:"1px solid rgba(245,158,11,.25)",borderRadius:16,
                     padding:"16px 20px",marginBottom:10,
-                    boxShadow:"0 0 20px rgba(245,158,11,.06)", display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:16
+                    boxShadow:"0 0 20px rgba(245,158,11,.06)", display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:16, textAlign:"left"
                   }}>
-                    <div>
+                    <div style={{textAlign:"left",flex:"1 1 220px",minWidth:0}}>
                       <p style={{fontWeight:600,fontSize:15}}>{a.name}</p>
                       <p style={{fontSize:20,color:"var(--gold)",marginTop:2, fontFamily:"'Playfair Display',serif", fontWeight:700}}>₹{a.amount}</p>
                       <p style={{fontSize:12,color:"var(--muted)",marginTop:4}}>{a.reason}</p>
                       <p style={{fontSize:11,color:"var(--text-2)",marginTop:4}}>Requested {fmtDate(a.appliedAt)}</p>
                     </div>
-                    <div style={{display:"flex",gap:8,flexDirection:"column"}}>
-                      <button className="btn btn-success btn-sm" onClick={() => markAdvancePaid(a.id)}><Check size={14}/> Mark Paid</button>
-                      <button className="btn btn-danger btn-sm" onClick={() => rejectAdvance(a.id)}><X size={14}/> Reject</button>
+                    <div style={{display:"flex",gap:8,flexDirection:"column",flex:"1 1 150px",minWidth:140,maxWidth:180}}>
+                      <button className="btn btn-success btn-sm" style={{width:"100%"}} onClick={() => markAdvancePaid(a.id)}><Check size={14}/> Mark Paid</button>
+                      <button className="btn btn-danger btn-sm" style={{width:"100%"}} onClick={() => rejectAdvance(a.id)}><X size={14}/> Reject</button>
                     </div>
                   </div>
                 ))}
@@ -2053,7 +2182,7 @@ function OwnerDashboard({ onLogout }) {
                 <p style={{fontSize:12,color:"var(--success)",textTransform:"uppercase",letterSpacing:".1em",fontWeight:500,marginBottom:12}}><Check size={14} style={{verticalAlign:"middle", marginTop:"-2px"}}/> Paid Advances ({paidAdvances.length})</p>
                 {[...paidAdvances].reverse().map(a => (
                   <div key={a.id} className="card" style={{marginBottom:10,display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:10}}>
-                    <div>
+                    <div style={{textAlign:"left",flex:"1 1 220px",minWidth:0}}>
                       <p style={{fontWeight:600,fontSize:14}}>{a.name} <span style={{color:"var(--muted)",fontWeight:400}}>· ₹{a.amount}</span></p>
                       <p style={{fontSize:12,color:"var(--muted)"}}>Req: {fmtDate(a.appliedAt)}{a.paidAt ? ` · Paid: ${fmtDate(a.paidAt)}` : ""} · {a.reason}</p>
                     </div>
@@ -2069,7 +2198,7 @@ function OwnerDashboard({ onLogout }) {
                 <p style={{fontSize:12,color:"var(--danger)",textTransform:"uppercase",letterSpacing:".1em",fontWeight:500,marginBottom:12}}><X size={14}/> Rejected Advances ({rejectedAdvances.length})</p>
                 {[...rejectedAdvances].reverse().map(a => (
                   <div key={a.id} className="card" style={{marginBottom:10,display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:10}}>
-                    <div>
+                    <div style={{textAlign:"left",flex:"1 1 220px",minWidth:0}}>
                       <p style={{fontWeight:600,fontSize:14}}>{a.name} <span style={{color:"var(--muted)",fontWeight:400}}>· ₹{a.amount}</span></p>
                       <p style={{fontSize:12,color:"var(--muted)"}}>{fmtDate(a.appliedAt)} · {a.reason}</p>
                     </div>
@@ -2106,6 +2235,62 @@ function OwnerDashboard({ onLogout }) {
                 </label>
               </div>
             </div>
+            <div className="card" style={{marginBottom: 20}}>
+              <h4 style={{fontSize:16, marginBottom:6}}>Default Clock Out Time</h4>
+              <p style={{color:"var(--muted)", fontSize:13, marginBottom:16}}>
+                When enabled, open shifts are automatically closed at the selected IST time to prevent accidental overtime from missed clock-outs.
+                For late season shifts, set an early morning time like 5:00 AM and the app will close the shift the next morning.
+              </p>
+              <label className="field-label">Auto Clock Out Time (IST)</label>
+              {(() => {
+                const hour24 = settings.autoClockOutHourIst ?? DEFAULT_AUTO_CLOCK_OUT_HOUR_IST;
+                const minute = settings.autoClockOutMinuteIst ?? DEFAULT_AUTO_CLOCK_OUT_MINUTE_IST;
+                const timeParts = to12HourParts(hour24);
+                return (
+                  <div className="mobile-stack-grid" style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:16}}>
+                    <select
+                      className="input"
+                      value={timeParts.hour}
+                      onChange={e => updateSettings({ autoClockOutHourIst: to24Hour(e.target.value, timeParts.period) })}
+                      style={{marginBottom:0}}
+                    >
+                      {Array.from({ length: 12 }, (_, i) => i + 1).map(hour => (
+                        <option key={hour} value={hour}>{hour}</option>
+                      ))}
+                    </select>
+                    <select
+                      className="input"
+                      value={minute}
+                      onChange={e => updateSettings({ autoClockOutMinuteIst: Number(e.target.value) })}
+                      style={{marginBottom:0}}
+                    >
+                      {Array.from({ length: 60 }, (_, m) => m).map(m => (
+                        <option key={m} value={m}>{String(m).padStart(2, "0")}</option>
+                      ))}
+                    </select>
+                    <select
+                      className="input"
+                      value={timeParts.period}
+                      onChange={e => updateSettings({ autoClockOutHourIst: to24Hour(timeParts.hour, e.target.value) })}
+                      style={{marginBottom:0}}
+                    >
+                      <option value="AM">AM</option>
+                      <option value="PM">PM</option>
+                    </select>
+                  </div>
+                );
+              })()}
+              <div style={{display:"flex", gap:20, flexWrap:"wrap"}}>
+                <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer",fontSize:14}}>
+                  <input type="radio" checked={settings.autoClockOutEnabled !== false} onChange={() => updateSettings({autoClockOutEnabled: true})} style={{accentColor:"var(--gold)", width: 16, height: 16}}/>
+                  Enable Auto Clock Out
+                </label>
+                <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer",fontSize:14}}>
+                  <input type="radio" checked={settings.autoClockOutEnabled === false} onChange={() => updateSettings({autoClockOutEnabled: false})} style={{accentColor:"var(--gold)", width: 16, height: 16}}/>
+                  Disable for Overtime Season
+                </label>
+              </div>
+            </div>
 
             <div className="card" style={{marginBottom: 20}}>
               <h4 style={{fontSize:16, marginBottom:6}}>Manage Branches</h4>
@@ -2115,7 +2300,7 @@ function OwnerDashboard({ onLogout }) {
                 {settings.branches?.map(b => (
                   <div key={b} style={{display:"flex", justifyContent:"space-between", alignItems:"center", background:"var(--surface)", padding:"8px 12px", borderRadius:8, border:"1px solid var(--border)"}}>
                     {editingBranch === b ? (
-                      <div style={{display:"flex", gap:8, width:"100%"}}>
+                      <div style={{display:"flex", gap:8, width:"100%",flexWrap:"wrap"}}>
                         <input type="text" className="input" value={editBranchValue} onChange={e => setEditBranchValue(e.target.value)} style={{padding:"4px 8px", minHeight:32, marginBottom:0}} />
                         <button className="btn btn-success btn-sm" style={{padding:"4px 10px"}} onClick={() => saveEditBranch(b)}>✓</button>
                         <button className="btn btn-ghost btn-sm" style={{padding:"4px 10px"}} onClick={() => setEditingBranch(null)}><X size={12}/></button>
@@ -2164,17 +2349,18 @@ function OwnerDashboard({ onLogout }) {
               </p>
               
               <label className="field-label">Retention Period (Days)</label>
-              <div style={{display:"flex", gap:8}}>
+              <div style={{display:"flex", gap:8,flexWrap:"wrap"}}>
                 <input 
                   type="number" 
                   min="30"
                   value={retentionDaysInput} 
                   onChange={e => setRetentionDaysInput(e.target.value)} 
                   className="input" 
-                  style={{marginBottom: 0}} 
+                  style={{marginBottom: 0,flex:"2 1 160px"}} 
                 />
                 <button 
                   className="btn btn-gold" 
+                  style={{flex:"1 1 120px"}}
                   onClick={() => {
                     const days = parseInt(retentionDaysInput, 10);
                     if (isNaN(days) || days < 1) { alert("Please enter a valid number of days."); return; }
@@ -2182,6 +2368,18 @@ function OwnerDashboard({ onLogout }) {
                     alert(`Retention period updated to ${days} days.`);
                   }}
                 >Save</button>
+              </div>
+              <div style={{borderTop:"1px solid var(--border)",marginTop:16,paddingTop:16}}>
+                <p style={{color:"var(--danger)", fontSize:12, marginBottom:12, lineHeight:1.5}}>
+                  Warning: immediate cleanup permanently deletes old timesheets, leave requests, and salary advances only. Employee/staff details must never be deleted by this action.
+                </p>
+                <button
+                  className="btn btn-danger"
+                  style={{width:"100%"}}
+                  onClick={runImmediateCleanup}
+                >
+                  <Trash2 size={14}/> Clean Up Old Records Now
+                </button>
               </div>
             </div>
 
@@ -2370,7 +2568,7 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
               )}
             </div>
           ))}
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+          <div className="mobile-stack-grid" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
             <div>
               <label className="field-label">Branch</label>
               <select className="input" value={form.branch} onChange={e => setForm(p=>({...p,branch:e.target.value}))}>
@@ -2388,7 +2586,7 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
           </div>
           <div style={{borderTop:"1px solid var(--border)", margin:"16px 0", paddingTop:16}}>
             <h4 style={{fontSize:14,color:"var(--text-2)",marginBottom:12}}>Profile Details (Optional)</h4>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+            <div className="mobile-stack-grid" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
               <div>
                 <label className="field-label">Phone</label>
                 <input type="tel" placeholder="Phone" value={form.phone} onChange={e => setForm(p=>({...p,phone:e.target.value}))} className="input"/>
@@ -2398,7 +2596,7 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
                 <input type="email" placeholder="Email" value={form.email} onChange={e => setForm(p=>({...p,email:e.target.value}))} className="input"/>
               </div>
             </div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+            <div className="mobile-stack-grid" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
               <div>
                 <label className="field-label">Gender</label>
                 <select className="input" value={form.gender} onChange={e => setForm(p=>({...p,gender:e.target.value}))}>
@@ -2422,13 +2620,13 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
       <div style={{display:"flex",flexDirection:"column",gap:10}}>
         {fEmployees.map(emp => (
           <div key={emp.id} className="card" style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8, textAlign: "left"}}>
-            <div style={{display:"flex",alignItems:"center",gap:12}}>
+            <div style={{display:"flex",alignItems:"center",gap:12,minWidth:0,flex:"1 1 220px"}}>
               <div style={{
                 width:38,height:38,borderRadius:11,background:"var(--card-2)",
                 border:"1px solid var(--border-2)",display:"flex",alignItems:"center",
                 justifyContent:"center",fontSize:16, overflow:"hidden"
               }}><User size={20} /></div>
-              <div>
+              <div style={{minWidth:0}}>
                 <div style={{fontWeight:600}}>{emp.name}</div>
                 <div style={{fontSize:12,color:"var(--muted)"}}>{emp.role} {emp.branch ? `· ${emp.branch}` : ""} · {emp.employmentType || "Full-time"} · {emp.paymentCycle || "Weekly"} · PIN: {emp.pin} · ₹{emp.dailySalary||0}/day (₹{emp.hourlyRate||0}/hr)</div>
                 {(emp.phone || emp.email || emp.gender || emp.address) && (
@@ -2441,7 +2639,7 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
                 )}
               </div>
             </div>
-            <div style={{display:"flex", gap:8}}>
+            <div className="mobile-full" style={{display:"flex", gap:8,flexWrap:"wrap",justifyContent:"flex-end"}}>
               <button className="btn btn-outline btn-sm" onClick={() => edit(emp)}>Edit</button>
               {confirmRemoveId === emp.id ? (
                 <>
