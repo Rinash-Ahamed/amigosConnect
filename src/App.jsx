@@ -337,6 +337,25 @@ const GlobalStyle = () => (
     @keyframes spin {
       to { transform: rotate(360deg); }
     }
+    @keyframes float {
+      0%, 100% { transform: translate(0px, 0px) scale(1); }
+      33%      { transform: translate(30px, -50px) scale(1.05); }
+      66%      { transform: translate(-20px, 20px) scale(0.95); }
+    }
+    @keyframes float-reverse {
+      0%, 100% { transform: translate(0px, 0px) scale(1); }
+      33%      { transform: translate(-30px, 50px) scale(1.05); }
+      66%      { transform: translate(20px, -20px) scale(0.95); }
+    }
+    @keyframes logo-pulse {
+      0%, 100% { box-shadow: 0 0 15px rgba(212,168,67,0.1); }
+      50%      { box-shadow: 0 0 30px rgba(212,168,67,0.35); }
+    }
+    @keyframes logo-flip {
+      0%      { transform: rotateY(0deg); }
+      66.66%  { transform: rotateY(360deg); }
+      100%    { transform: rotateY(360deg); }
+    }
     @keyframes shimmer {
       0%   { background-position: -200% center; }
       100% { background-position: 200% center; }
@@ -595,18 +614,19 @@ function LoginScreen({ onLogin }) {
       position:"relative", overflow:"hidden"
     }}>
       <GlobalStyle />
-      {/* Decorative orbs */}
-      <div style={{position:"absolute",top:"-15%",left:"-10%",width:400,height:400,borderRadius:"50%",background:"radial-gradient(circle,rgba(212,168,67,.04) 0%,transparent 70%)",pointerEvents:"none"}}/>
-      <div style={{position:"absolute",bottom:"-10%",right:"-10%",width:350,height:350,borderRadius:"50%",background:"radial-gradient(circle,rgba(85,133,255,.04) 0%,transparent 70%)",pointerEvents:"none"}}/>
+      {/* Animated Decorative orbs */}
+      <div style={{position:"absolute",top:"-15%",left:"-10%",width:400,height:400,borderRadius:"50%",background:"radial-gradient(circle,rgba(212,168,67,.04) 0%,transparent 70%)",pointerEvents:"none", animation: "float 20s ease-in-out infinite"}}/>
+      <div style={{position:"absolute",bottom:"-10%",right:"-10%",width:350,height:350,borderRadius:"50%",background:"radial-gradient(circle,rgba(85,133,255,.04) 0%,transparent 70%)",pointerEvents:"none", animation: "float-reverse 25s ease-in-out infinite"}}/>
 
       {/* Logo */}
       <div className="fade-up" style={{textAlign:"center", marginBottom:44}}>
         <div style={{
           width:76, height:76, minWidth:76, minHeight:76, flexShrink:0, borderRadius:"50%", margin:"0 auto 18px",
           display:"flex", alignItems:"center", justifyContent:"center",
-          overflow:"hidden"
+          overflow:"hidden", animation: "logo-pulse 3s ease-in-out infinite",
+          perspective: 1000
         }}>
-          <img src="/logo.png" alt="Amigos" fetchpriority="high" decoding="async" style={{width:"100%",height:"100%",objectFit:"cover"}} />
+          <img src="/logo.png" alt="Amigos" fetchpriority="high" decoding="async" style={{width:"100%",height:"100%",objectFit:"cover", borderRadius: "50%", animation: "logo-flip 4.5s ease-in-out infinite"}} />
         </div>
         <h1 style={{fontSize:30, color:"var(--gold)", marginBottom:4, letterSpacing:"0.05em"}}>AMIGOS Connect</h1>
         <p style={{color:"var(--muted)", fontSize:12, letterSpacing:"0.18em", textTransform:"uppercase", fontWeight:500}}>Staff & Manager Portal</p>
@@ -1741,7 +1761,7 @@ function OwnerDashboard({ onLogout }) {
             display:"flex",alignItems:"center",justifyContent:"center",
             overflow:"hidden"
           }}>
-            <img src="/logo.png" alt="" loading="lazy" decoding="async" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+            <img src="/logo.png" alt="" loading="lazy" decoding="async" style={{width:"100%",height:"100%",objectFit:"cover", borderRadius: "50%"}}/>
           </div>
           <div>
             <h2 style={{fontSize:16,color:"var(--gold)",lineHeight:1.1,letterSpacing:"0.04em",whiteSpace:"nowrap"}}>AMIGOS Connect</h2>
@@ -1835,26 +1855,40 @@ function OwnerDashboard({ onLogout }) {
                 </div>
               </div>
               {fEmployees.length === 0 && <p style={{color:"var(--muted)",fontSize:13}}>No staff added yet.</p>}
-              {fEmployees.map(emp => {
-                const wh = totalHours(getOverviewLogs(emp.id).filter(l=>l.clockOut));
+              {(() => {
+                if (fEmployees.length === 0) return null;
                 const maxHrs = Math.max(...fEmployees.map(e => totalHours(getOverviewLogs(e.id).filter(l=>l.clockOut))), 1);
-                const pct = (wh / maxHrs) * 100;
                 return (
-                  <div key={emp.id} style={{marginBottom: 14}}>
-                    <div style={{display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:6}}>
-                      <span style={{fontWeight:500}}>{emp.name}</span>
-                      <span style={{color:"var(--gold)", fontFamily:"'Playfair Display', serif", fontWeight:600}}>{wh.toFixed(1)} hrs</span>
-                    </div>
-                    <div style={{width:"100%", background:"var(--surface)", height:6, borderRadius:4, overflow:"hidden", border:"1px solid var(--border)"}}>
-                      <div style={{width: `${pct}%`, background: "linear-gradient(90deg, var(--gold-dim), var(--gold))", height:"100%", borderRadius:4, transition:"width 1s cubic-bezier(0.22, 1, 0.36, 1)"}} />
-                    </div>
+                  <div style={{ maxHeight: fEmployees.length > 10 ? 400 : "none", overflowY: fEmployees.length > 10 ? "auto" : "visible", paddingRight: fEmployees.length > 10 ? 8 : 0, WebkitOverflowScrolling: "touch", scrollbarWidth: "thin" }}>
+                    {fEmployees.map(emp => {
+                      const wh = totalHours(getOverviewLogs(emp.id).filter(l=>l.clockOut));
+                      const pct = (wh / maxHrs) * 100;
+                      return (
+                        <div key={emp.id} style={{marginBottom: 14}}>
+                          <div style={{display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:6}}>
+                            <span style={{fontWeight:500}}>{emp.name}</span>
+                            <span style={{color:"var(--gold)", fontFamily:"'Playfair Display', serif", fontWeight:600}}>{wh.toFixed(1)} hrs</span>
+                          </div>
+                          <div style={{width:"100%", background:"var(--surface)", height:6, borderRadius:4, overflow:"hidden", border:"1px solid var(--border)"}}>
+                            <div style={{width: `${pct}%`, background: "linear-gradient(90deg, var(--gold-dim), var(--gold))", height:"100%", borderRadius:4, transition:"width 1s cubic-bezier(0.22, 1, 0.36, 1)"}} />
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 );
-              })}
+              })()}
             </div>
 
             <h3 style={{fontSize:18,marginBottom:14}}>Staff Status</h3>
-            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+            <div style={{
+              display:"flex", flexDirection:"column", gap:10,
+              maxHeight: fEmployees.length > 20 ? 1600 : "none", 
+              overflowY: fEmployees.length > 20 ? "auto" : "visible", 
+              paddingRight: fEmployees.length > 20 ? 8 : 0, 
+              WebkitOverflowScrolling: "touch", 
+              scrollbarWidth: "thin"
+            }}>
               {fEmployees.map(emp => {
                 const sess = activeSessions.find(l => l.employeeId === emp.id);
                 const wh = totalHours(currentWeekLogs(emp.id).filter(l=>l.clockOut));
@@ -2552,6 +2586,12 @@ function OwnerDashboard({ onLogout }) {
               >
                 Update Password
               </button>
+            </div>
+
+            {/* Developer Info Footer */}
+            <div style={{ textAlign: "center", marginTop: 40, marginBottom: 20, color: "var(--muted)", fontSize: 12, lineHeight: 1.6 }}>
+              <p style={{ fontWeight: 600, color: "var(--text-2)", letterSpacing: "0.05em", textTransform: "uppercase" }}>Amigos Connect v1.0.1</p>
+              <p style={{ marginTop: 4 }}>Developer: Rinash Ahamed</p>
             </div>
           </div>
         )}
