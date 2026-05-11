@@ -351,6 +351,11 @@ const GlobalStyle = () => (
       0%, 100% { box-shadow: 0 0 15px rgba(212,168,67,0.1); }
       50%      { box-shadow: 0 0 30px rgba(212,168,67,0.35); }
     }
+    @keyframes logo-flip {
+      0%      { transform: rotateY(0deg); }
+      66.66%  { transform: rotateY(360deg); }
+      100%    { transform: rotateY(360deg); }
+    }
     @keyframes shimmer {
       0%   { background-position: -200% center; }
       100% { background-position: 200% center; }
@@ -618,9 +623,10 @@ function LoginScreen({ onLogin }) {
         <div style={{
           width:76, height:76, minWidth:76, minHeight:76, flexShrink:0, borderRadius:"50%", margin:"0 auto 18px",
           display:"flex", alignItems:"center", justifyContent:"center",
-          overflow:"hidden", animation: "logo-pulse 3s ease-in-out infinite"
+          overflow:"hidden", animation: "logo-pulse 3s ease-in-out infinite",
+          perspective: 1000
         }}>
-          <img src="/logo.png" alt="Amigos" fetchpriority="high" decoding="async" style={{width:"100%",height:"100%",objectFit:"cover"}} />
+          <img src="/logo.png" alt="Amigos" fetchpriority="high" decoding="async" style={{width:"100%",height:"100%",objectFit:"cover", animation: "logo-flip 4.5s ease-in-out infinite"}} />
         </div>
         <h1 style={{fontSize:30, color:"var(--gold)", marginBottom:4, letterSpacing:"0.05em"}}>AMIGOS Connect</h1>
         <p style={{color:"var(--muted)", fontSize:12, letterSpacing:"0.18em", textTransform:"uppercase", fontWeight:500}}>Staff & Manager Portal</p>
