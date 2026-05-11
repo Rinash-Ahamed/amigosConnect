@@ -1855,22 +1855,29 @@ function OwnerDashboard({ onLogout }) {
                 </div>
               </div>
               {fEmployees.length === 0 && <p style={{color:"var(--muted)",fontSize:13}}>No staff added yet.</p>}
-              {fEmployees.map(emp => {
-                const wh = totalHours(getOverviewLogs(emp.id).filter(l=>l.clockOut));
+              {(() => {
+                if (fEmployees.length === 0) return null;
                 const maxHrs = Math.max(...fEmployees.map(e => totalHours(getOverviewLogs(e.id).filter(l=>l.clockOut))), 1);
-                const pct = (wh / maxHrs) * 100;
                 return (
-                  <div key={emp.id} style={{marginBottom: 14}}>
-                    <div style={{display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:6}}>
-                      <span style={{fontWeight:500}}>{emp.name}</span>
-                      <span style={{color:"var(--gold)", fontFamily:"'Playfair Display', serif", fontWeight:600}}>{wh.toFixed(1)} hrs</span>
-                    </div>
-                    <div style={{width:"100%", background:"var(--surface)", height:6, borderRadius:4, overflow:"hidden", border:"1px solid var(--border)"}}>
-                      <div style={{width: `${pct}%`, background: "linear-gradient(90deg, var(--gold-dim), var(--gold))", height:"100%", borderRadius:4, transition:"width 1s cubic-bezier(0.22, 1, 0.36, 1)"}} />
-                    </div>
+                  <div style={{ maxHeight: fEmployees.length > 10 ? 400 : "none", overflowY: fEmployees.length > 10 ? "auto" : "visible", paddingRight: fEmployees.length > 10 ? 8 : 0, WebkitOverflowScrolling: "touch", scrollbarWidth: "thin" }}>
+                    {fEmployees.map(emp => {
+                      const wh = totalHours(getOverviewLogs(emp.id).filter(l=>l.clockOut));
+                      const pct = (wh / maxHrs) * 100;
+                      return (
+                        <div key={emp.id} style={{marginBottom: 14}}>
+                          <div style={{display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:6}}>
+                            <span style={{fontWeight:500}}>{emp.name}</span>
+                            <span style={{color:"var(--gold)", fontFamily:"'Playfair Display', serif", fontWeight:600}}>{wh.toFixed(1)} hrs</span>
+                          </div>
+                          <div style={{width:"100%", background:"var(--surface)", height:6, borderRadius:4, overflow:"hidden", border:"1px solid var(--border)"}}>
+                            <div style={{width: `${pct}%`, background: "linear-gradient(90deg, var(--gold-dim), var(--gold))", height:"100%", borderRadius:4, transition:"width 1s cubic-bezier(0.22, 1, 0.36, 1)"}} />
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 );
-              })}
+              })()}
             </div>
 
             <h3 style={{fontSize:18,marginBottom:14}}>Staff Status</h3>
