@@ -337,6 +337,20 @@ const GlobalStyle = () => (
     @keyframes spin {
       to { transform: rotate(360deg); }
     }
+    @keyframes float {
+      0%, 100% { transform: translate(0px, 0px) scale(1); }
+      33%      { transform: translate(30px, -50px) scale(1.05); }
+      66%      { transform: translate(-20px, 20px) scale(0.95); }
+    }
+    @keyframes float-reverse {
+      0%, 100% { transform: translate(0px, 0px) scale(1); }
+      33%      { transform: translate(-30px, 50px) scale(1.05); }
+      66%      { transform: translate(20px, -20px) scale(0.95); }
+    }
+    @keyframes logo-pulse {
+      0%, 100% { box-shadow: 0 0 15px rgba(212,168,67,0.1); }
+      50%      { box-shadow: 0 0 30px rgba(212,168,67,0.35); }
+    }
     @keyframes shimmer {
       0%   { background-position: -200% center; }
       100% { background-position: 200% center; }
@@ -595,16 +609,16 @@ function LoginScreen({ onLogin }) {
       position:"relative", overflow:"hidden"
     }}>
       <GlobalStyle />
-      {/* Decorative orbs */}
-      <div style={{position:"absolute",top:"-15%",left:"-10%",width:400,height:400,borderRadius:"50%",background:"radial-gradient(circle,rgba(212,168,67,.04) 0%,transparent 70%)",pointerEvents:"none"}}/>
-      <div style={{position:"absolute",bottom:"-10%",right:"-10%",width:350,height:350,borderRadius:"50%",background:"radial-gradient(circle,rgba(85,133,255,.04) 0%,transparent 70%)",pointerEvents:"none"}}/>
+      {/* Animated Decorative orbs */}
+      <div style={{position:"absolute",top:"-15%",left:"-10%",width:400,height:400,borderRadius:"50%",background:"radial-gradient(circle,rgba(212,168,67,.04) 0%,transparent 70%)",pointerEvents:"none", animation: "float 20s ease-in-out infinite"}}/>
+      <div style={{position:"absolute",bottom:"-10%",right:"-10%",width:350,height:350,borderRadius:"50%",background:"radial-gradient(circle,rgba(85,133,255,.04) 0%,transparent 70%)",pointerEvents:"none", animation: "float-reverse 25s ease-in-out infinite"}}/>
 
       {/* Logo */}
       <div className="fade-up" style={{textAlign:"center", marginBottom:44}}>
         <div style={{
           width:76, height:76, minWidth:76, minHeight:76, flexShrink:0, borderRadius:"50%", margin:"0 auto 18px",
           display:"flex", alignItems:"center", justifyContent:"center",
-          overflow:"hidden"
+          overflow:"hidden", animation: "logo-pulse 3s ease-in-out infinite"
         }}>
           <img src="/logo.png" alt="Amigos" fetchpriority="high" decoding="async" style={{width:"100%",height:"100%",objectFit:"cover"}} />
         </div>
@@ -2552,6 +2566,12 @@ function OwnerDashboard({ onLogout }) {
               >
                 Update Password
               </button>
+            </div>
+
+            {/* Developer Info Footer */}
+            <div style={{ textAlign: "center", marginTop: 40, marginBottom: 20, color: "var(--muted)", fontSize: 12, lineHeight: 1.6 }}>
+              <p style={{ fontWeight: 600, color: "var(--text-2)", letterSpacing: "0.05em", textTransform: "uppercase" }}>Amigos Connect v1.0.1</p>
+              <p style={{ marginTop: 4 }}>Developer: Rinash Ahamed</p>
             </div>
           </div>
         )}
