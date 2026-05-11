@@ -626,7 +626,7 @@ function LoginScreen({ onLogin }) {
           overflow:"hidden", animation: "logo-pulse 3s ease-in-out infinite",
           perspective: 1000
         }}>
-          <img src="/logo.png" alt="Amigos" fetchpriority="high" decoding="async" style={{width:"100%",height:"100%",objectFit:"cover", animation: "logo-flip 4.5s ease-in-out infinite"}} />
+          <img src="/logo.png" alt="Amigos" fetchpriority="high" decoding="async" style={{width:"100%",height:"100%",objectFit:"cover", borderRadius: "50%", animation: "logo-flip 4.5s ease-in-out infinite"}} />
         </div>
         <h1 style={{fontSize:30, color:"var(--gold)", marginBottom:4, letterSpacing:"0.05em"}}>AMIGOS Connect</h1>
         <p style={{color:"var(--muted)", fontSize:12, letterSpacing:"0.18em", textTransform:"uppercase", fontWeight:500}}>Staff & Manager Portal</p>
@@ -1761,7 +1761,7 @@ function OwnerDashboard({ onLogout }) {
             display:"flex",alignItems:"center",justifyContent:"center",
             overflow:"hidden"
           }}>
-            <img src="/logo.png" alt="" loading="lazy" decoding="async" style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+            <img src="/logo.png" alt="" loading="lazy" decoding="async" style={{width:"100%",height:"100%",objectFit:"cover", borderRadius: "50%"}}/>
           </div>
           <div>
             <h2 style={{fontSize:16,color:"var(--gold)",lineHeight:1.1,letterSpacing:"0.04em",whiteSpace:"nowrap"}}>AMIGOS Connect</h2>
@@ -1881,7 +1881,14 @@ function OwnerDashboard({ onLogout }) {
             </div>
 
             <h3 style={{fontSize:18,marginBottom:14}}>Staff Status</h3>
-            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+            <div style={{
+              display:"flex", flexDirection:"column", gap:10,
+              maxHeight: fEmployees.length > 20 ? 1600 : "none", 
+              overflowY: fEmployees.length > 20 ? "auto" : "visible", 
+              paddingRight: fEmployees.length > 20 ? 8 : 0, 
+              WebkitOverflowScrolling: "touch", 
+              scrollbarWidth: "thin"
+            }}>
               {fEmployees.map(emp => {
                 const sess = activeSessions.find(l => l.employeeId === emp.id);
                 const wh = totalHours(currentWeekLogs(emp.id).filter(l=>l.clockOut));
