@@ -1141,15 +1141,19 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
               <h3 style={{fontSize:17,color:"var(--gold)",marginBottom:16}}>My Profile</h3>
               <div className="mobile-stack-grid" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
                 <div>
+                  <label className="field-label">Employee PIN (LOGIN PIN)</label>
+                  <input type="text" className="input" value={employee.pin || ""} readOnly />
+                </div>
+                <div>
                   <label className="field-label">Phone Number</label>
                   <input type="tel" className="input" placeholder="e.g. 9876543210" value={profileForm.phone}
                     onChange={e => setProfileForm(p=>({...p,phone:e.target.value}))}/>
                 </div>
-                <div>
-                  <label className="field-label">Email</label>
-                  <input type="email" className="input" placeholder="e.g. me@example.com" value={profileForm.email}
-                    onChange={e => setProfileForm(p=>({...p,email:e.target.value}))}/>
-                </div>
+              </div>
+              <div style={{marginBottom:12}}>
+                <label className="field-label">Email</label>
+                <input type="email" className="input" placeholder="e.g. me@example.com" value={profileForm.email}
+                  onChange={e => setProfileForm(p=>({...p,email:e.target.value}))}/>
               </div>
               <div style={{marginBottom:12}}>
                 <label className="field-label">Gender</label>
@@ -1228,6 +1232,7 @@ function OwnerDashboard({ onLogout }) {
   const [leaves, setLeaves] = useState([]);
   const [advances, setAdvances] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [now, setNow] = useState(new Date());
   const [newPass, setNewPass] = useState("");
   const [newBranch, setNewBranch] = useState("");
@@ -1255,10 +1260,19 @@ function OwnerDashboard({ onLogout }) {
   useEffect(() => {
     let currentSettings = settings;
     let loadedCount = 0;
+    const timeout = setTimeout(() => {
+      if (loadedCount < 5) {
+        setError("Loading timed out. Check your connection and refresh the page.");
+        setLoading(false);
+      }
+    }, 10000);
     const checkLoaded = () => {
       if (loadedCount < 5) {
         loadedCount++;
-        if (loadedCount === 5) setLoading(false);
+        if (loadedCount === 5) {
+          clearTimeout(timeout);
+          setLoading(false);
+        }
       }
     };
 
