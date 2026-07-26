@@ -128,6 +128,7 @@ const storage = {
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 const SESSION_IDLE_TIMEOUT_MS = 15 * 60 * 1000;
 const SESSION_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+const EMPLOYEE_PIN_LENGTH = 6;
 const DEFAULT_AUTO_CLOCK_OUT_HOUR_IST = 23;
 const DEFAULT_AUTO_CLOCK_OUT_MINUTE_IST = 0;
 const todayIstDate = () => new Date(Date.now() + IST_OFFSET_MS).toISOString().slice(0, 10);
@@ -516,7 +517,7 @@ const GlobalStyle = () => (
 );
 
 // ── PIN Pad ──
-function PinPad({ value, onChange, maxLen = 4 }) {
+function PinPad({ value, onChange, maxLen = EMPLOYEE_PIN_LENGTH }) {
   const keys = ["1","2","3","4","5","6","7","8","9","","0","⌫"];
   return (
     <div>
@@ -607,7 +608,7 @@ function LoginScreen({ onLogin }) {
   }, []);
 
   const tryEmployeePin = useCallback((p) => {
-    if (p.length < 4) return;
+    if (p.length < EMPLOYEE_PIN_LENGTH) return;
     const emp = employees.find(e => e.pin === p);
     if (emp) { setError(""); onLogin("employee", emp); }
     else { setError("Incorrect PIN. Please try again."); setPin(""); }
@@ -615,7 +616,7 @@ function LoginScreen({ onLogin }) {
 
   const handlePinChange = (nextPin) => {
     setPin(nextPin);
-    if (nextPin.length === 4) tryEmployeePin(nextPin);
+    if (nextPin.length === EMPLOYEE_PIN_LENGTH) tryEmployeePin(nextPin);
   };
 
   const handleInstall = async () => {
@@ -705,7 +706,7 @@ function LoginScreen({ onLogin }) {
         </div>
       ) : mode === "employee" ? (
         <div className="fade-up" style={{width:"100%",maxWidth:300,textAlign:"center"}}>
-          <p style={{color:"var(--text-2)",marginBottom:28,fontSize:14}}>Enter your 4-digit PIN</p>
+          <p style={{color:"var(--text-2)",marginBottom:28,fontSize:14}}>Enter your 6-digit PIN</p>
           <PinPad value={pin} onChange={handlePinChange} />
           {error && (
             <p style={{color:"var(--danger)",marginTop:16,fontSize:13,background:"var(--danger-bg)",padding:"9px 14px",borderRadius:8,border:"1px solid rgba(224,85,85,.2)"}}>
@@ -1203,7 +1204,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
               <h3 style={{fontSize:17,color:"var(--gold)",marginBottom:16}}>My Profile</h3>
               <div className="mobile-stack-grid" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
                 <div>
-                  <label className="field-label">Employee PIN (LOGIN PIN)</label>
+                  <label className="field-label">Employee 6-Digit PIN (Login PIN)</label>
                   <input type="text" className="input" value={employee.pin || ""} readOnly />
                 </div>
                 <div>
@@ -1295,7 +1296,7 @@ function OwnerDashboard({ role, onLogout }) {
   const [tab, setTab] = useState("overview");
 
   useEffect(() => {
-    if (!isOwner && (tab === "settings" || tab === "payroll")) {
+    if (tab === "live" || (!isOwner && (tab === "settings" || tab === "payroll"))) {
       setTab("overview");
     }
   }, [isOwner, tab]);
@@ -1318,7 +1319,6 @@ function OwnerDashboard({ role, onLogout }) {
   const [prMode, setPrMode] = useState("weekly");
   const [prOffset, setPrOffset] = useState(0);
   const [payrollSearch, setPayrollSearch] = useState("");
-  const [overviewMode, setOverviewMode] = useState("weekly");
   const [liveEmpTypeFilter, setLiveEmpTypeFilter] = useState("All");
   const [passwordForm, setPasswordForm] = useState({
     currentPassword: "",
@@ -1401,15 +1401,6 @@ function OwnerDashboard({ role, onLogout }) {
     return () => unsubs.forEach(unsub => unsub());
   }, [isOwner]);
 
-  const currentWeekStart = useMemo(() => {
-    const d = new Date(); d.setDate(d.getDate() - d.getDay()); d.setHours(0,0,0,0); return d;
-  }, []);
-  const currentWeekEnd = useMemo(() => { const d = new Date(currentWeekStart); d.setDate(currentWeekStart.getDate() + 7); return d; }, [currentWeekStart]);
-  const currentMonthStart = useMemo(() => {
-    const d = new Date(); d.setDate(1); d.setHours(0,0,0,0); return d;
-  }, []);
-  const currentMonthEnd = useMemo(() => { const d = new Date(currentMonthStart); d.setMonth(currentMonthStart.getMonth() + 1); return d; }, [currentMonthStart]);
-  
   const { tsStart, tsEnd } = useMemo(() => {
     const start = new Date(); start.setHours(0,0,0,0);
     if (tsMode === "weekly") {
@@ -1440,6 +1431,7 @@ function OwnerDashboard({ role, onLogout }) {
 
   const fEmployees = useMemo(() => selectedBranch === "All" ? employees : employees.filter(e => e.branch === selectedBranch), [employees, selectedBranch]);
   const fEmpIds = useMemo(() => new Set(fEmployees.map(e => e.id)), [fEmployees]);
+  const employeeById = useMemo(() => new Map(fEmployees.map(employee => [employee.id, employee])), [fEmployees]);
   const fLogs = useMemo(() => logs.filter(l => fEmpIds.has(l.employeeId)), [logs, fEmpIds]);
   const fLeaves = useMemo(() => leaves.filter(l => fEmpIds.has(l.employeeId)), [leaves, fEmpIds]);
   const fAdvances = useMemo(() => advances.filter(a => fEmpIds.has(a.employeeId)), [advances, fEmpIds]);
@@ -1452,19 +1444,30 @@ function OwnerDashboard({ role, onLogout }) {
   
   const filteredActiveSessions = useMemo(() => activeSessions.filter(sess => {
     if (liveEmpTypeFilter === "All") return true;
-    const emp = fEmployees.find(e => e.id === sess.employeeId);
+    const emp = employeeById.get(sess.employeeId);
     return (emp?.employmentType || "Full-time") === liveEmpTypeFilter;
-  }), [activeSessions, fEmployees, liveEmpTypeFilter]);
+  }), [activeSessions, employeeById, liveEmpTypeFilter]);
 
   const filteredTodayLogs = useMemo(() => {
     const today = new Date(); today.setHours(0,0,0,0);
     return fLogs.filter(l => {
       if (!l.clockOut || new Date(l.clockIn) < today) return false;
       if (liveEmpTypeFilter === "All") return true;
-      const emp = fEmployees.find(e => e.id === l.employeeId);
+      const emp = employeeById.get(l.employeeId);
       return (emp?.employmentType || "Full-time") === liveEmpTypeFilter;
     });
-  }, [fLogs, fEmployees, liveEmpTypeFilter]);
+  }, [fLogs, employeeById, liveEmpTypeFilter]);
+  const recentTodayLogs = useMemo(() =>
+    [...filteredTodayLogs]
+      .sort((a, b) => new Date(b.clockOut) - new Date(a.clockOut))
+      .slice(0, 5),
+  [filteredTodayLogs]);
+  const todayCompletedHours = useMemo(() =>
+    filteredTodayLogs.reduce(
+      (sum, log) => sum + hoursWorked(log.clockIn, log.clockOut, log.breaks),
+      0,
+    ),
+  [filteredTodayLogs]);
 
   const pendingLeaves = useMemo(() => fLeaves.filter(l => l.status === "pending"), [fLeaves]);
   const approvedLeaves = useMemo(() => fLeaves.filter(l => l.status === "approved"), [fLeaves]);
@@ -1483,18 +1486,6 @@ function OwnerDashboard({ role, onLogout }) {
     const d = new Date(l.clockIn);
     return l.employeeId === empId && d >= prStart && d < prEnd;
   }), [fLogs, prStart, prEnd]);
-
-  const currentWeekLogs = useCallback((empId) => fLogs.filter(l => {
-    const d = new Date(l.clockIn);
-    return l.employeeId === empId && d >= currentWeekStart && d < currentWeekEnd;
-  }), [fLogs, currentWeekStart, currentWeekEnd]);
-
-  const currentMonthLogs = useCallback((empId) => fLogs.filter(l => {
-    const d = new Date(l.clockIn);
-    return l.employeeId === empId && d >= currentMonthStart && d < currentMonthEnd;
-  }), [fLogs, currentMonthStart, currentMonthEnd]);
-
-  const getOverviewLogs = useCallback((empId) => overviewMode === "weekly" ? currentWeekLogs(empId) : currentMonthLogs(empId), [overviewMode, currentWeekLogs, currentMonthLogs]);
 
   const getPrAdvances = useCallback((empId) => fAdvances.filter(a => {
     const d = new Date(a.paidAt || a.appliedAt);
@@ -1828,8 +1819,7 @@ function OwnerDashboard({ role, onLogout }) {
   const totalPrHrs = prEmployees.reduce((s,emp) => s + totalHours(getPrLogs(emp.id).filter(l=>l.clockOut)), 0);
 
   const tabs = [
-    {id:"overview",  label:"Overview",   icon:<LayoutDashboard size={14} />},
-    {id:"live",      label:"Live Clock",  icon:<Timer size={14} />},
+    {id:"overview",  label:"Dashboard",   icon:<LayoutDashboard size={14} />},
     {id:"timesheet", label:"Timesheets",  icon:<ClipboardList size={14} />},
     ...(isOwner ? [{id:"payroll", label:"Payroll", icon:<IndianRupee size={14} />}] : []),
     {id:"requests",  label:"Requests",    icon:<Inbox size={14} />, badge: pendingLeaves.length + (isOwner ? pendingAdvances.length : 0)},
@@ -1980,101 +1970,15 @@ function OwnerDashboard({ role, onLogout }) {
               ))}
             </div>
 
-            {/* Hours Distribution Chart */}
-            <div className="card-glow" style={{marginBottom:24}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
-                <h3 style={{fontSize:16,color:"var(--gold)",marginBottom:0}}>Hours Distribution</h3>
-                <div style={{display:"flex",gap:4,alignItems:"center", background:"var(--card)", padding:"4px", borderRadius:10, border:"1px solid var(--border)"}}>
-                  <button className={`btn btn-xs ${overviewMode==="weekly" ? "btn-gold" : "btn-ghost"}`} style={{border:"none", padding:"4px 10px"}} onClick={() => setOverviewMode("weekly")}>Weekly</button>
-                  <button className={`btn btn-xs ${overviewMode==="monthly" ? "btn-gold" : "btn-ghost"}`} style={{border:"none", padding:"4px 10px"}} onClick={() => setOverviewMode("monthly")}>Monthly</button>
-                </div>
-              </div>
-              {fEmployees.length === 0 && <p style={{color:"var(--muted)",fontSize:13}}>No staff added yet.</p>}
-              {(() => {
-                if (fEmployees.length === 0) return null;
-                const maxHrs = Math.max(...fEmployees.map(e => totalHours(getOverviewLogs(e.id).filter(l=>l.clockOut))), 1);
-                return (
-                  <div style={{ maxHeight: fEmployees.length > 10 ? 400 : "none", overflowY: fEmployees.length > 10 ? "auto" : "visible", paddingRight: fEmployees.length > 10 ? 8 : 0, WebkitOverflowScrolling: "touch", scrollbarWidth: "thin" }}>
-                    {fEmployees.map(emp => {
-                      const wh = totalHours(getOverviewLogs(emp.id).filter(l=>l.clockOut));
-                      const pct = (wh / maxHrs) * 100;
-                      return (
-                        <div key={emp.id} style={{marginBottom: 14}}>
-                          <div style={{display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:6}}>
-                            <span style={{fontWeight:500}}>{emp.name}</span>
-                            <span style={{color:"var(--gold)", fontFamily:"'Playfair Display', serif", fontWeight:600}}>{wh.toFixed(1)} hrs</span>
-                          </div>
-                          <div style={{width:"100%", background:"var(--surface)", height:6, borderRadius:4, overflow:"hidden", border:"1px solid var(--border)"}}>
-                            <div style={{width: `${pct}%`, background: "linear-gradient(90deg, var(--gold-dim), var(--gold))", height:"100%", borderRadius:4, transition:"width 1s cubic-bezier(0.22, 1, 0.36, 1)"}} />
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                );
-              })()}
-            </div>
-
-            <h3 style={{fontSize:18,marginBottom:14}}>Staff Status</h3>
-            <div style={{
-              display:"flex", flexDirection:"column", gap:10,
-              maxHeight: fEmployees.length > 20 ? 1600 : "none", 
-              overflowY: fEmployees.length > 20 ? "auto" : "visible", 
-              paddingRight: fEmployees.length > 20 ? 8 : 0, 
-              WebkitOverflowScrolling: "touch", 
-              scrollbarWidth: "thin"
-            }}>
-              {fEmployees.map(emp => {
-                const sess = activeSessions.find(l => l.employeeId === emp.id);
-                const wh = totalHours(currentWeekLogs(emp.id).filter(l=>l.clockOut));
-                const elapsed = sess ? Math.floor((now - new Date(sess.clockIn)) / 1000) : 0;
-                const eStr = sess ? `${String(Math.floor(elapsed/3600)).padStart(2,"0")}:${String(Math.floor((elapsed%3600)/60)).padStart(2,"0")}:${String(elapsed%60).padStart(2,"0")}` : null;
-                return (
-                  <div key={emp.id} style={{
-                    background:"var(--card)",
-                    border: sess ? "1px solid rgba(62,207,122,.3)" : "1px solid var(--border)",
-                    borderRadius:14,padding:"14px 18px",
-                    display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10,
-                    boxShadow: sess ? "0 0 20px rgba(62,207,122,.06)" : "none"
-                  }}>
-                    <div style={{display:"flex",alignItems:"center",gap:12}}>
-                      <div style={{
-                        width:40,height:40,borderRadius:12,
-                        background: sess ? "var(--success-bg)" : "var(--card-2)",
-                        border: sess ? "1px solid rgba(62,207,122,.2)" : "1px solid var(--border)",
-                        display:"flex",alignItems:"center",justifyContent:"center",
-                        fontSize:18
-                      }}>
-                        {sess ? <span className="live-dot" style={{width:10,height:10}}/> : <User size={18} />}
-                      </div>
-                      <div style={{textAlign: "left"}}>
-                        <p style={{fontWeight:600,fontSize:14}}>{emp.name}</p>
-                        <p style={{fontSize:12,color:"var(--muted)"}}>
-                          {emp.role} {emp.branch ? `· ${emp.branch}` : ""} · {emp.employmentType || "Full-time"}
-                          {isOwner ? ` · ₹${emp.dailySalary || 0}/day (₹${emp.hourlyRate || 0}/hr)` : ""}
-                        </p>
-                      </div>
-                    </div>
-                    <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
-                      {sess && <span style={{fontSize:13,fontFamily:"'Playfair Display',serif",color:"var(--success)",fontWeight:600}}>{eStr}</span>}
-                      <span style={{fontSize:12,color:"var(--muted)"}}>{wh.toFixed(1)} hrs/wk</span>
-                      {sess
-                      ? <span className="tag tag-green">● In: {fmtDate(sess.clockIn)} {fmt(sess.clockIn)}</span>
-                        : <span className="tag tag-muted">○ Off</span>}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
           </div>
         )}
 
-        {/* ── LIVE CLOCK ── */}
-        {tab === "live" && (
+        {/* ── LIVE ATTENDANCE ── */}
+        {tab === "overview" && (
           <div className="fade-up">
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20,flexWrap:"wrap",gap:12}}>
               <div style={{display:"flex",alignItems:"center",gap:16,flexWrap:"wrap"}}>
-                <h3 style={{fontSize:20,marginBottom:0}}>Live Clock Activity</h3>
+                <h3 style={{fontSize:20,marginBottom:0}}>Live Now</h3>
                 <select className="input" style={{width:"auto", padding:"4px 10px", marginBottom:0, background:"var(--card-2)", border:"1px solid var(--border)", color:"var(--gold)", fontSize:13}} value={liveEmpTypeFilter} onChange={e => setLiveEmpTypeFilter(e.target.value)}>
                   <option value="All">All Types</option>
                   <option value="Full-time">Full-time</option>
@@ -2098,7 +2002,7 @@ function OwnerDashboard({ role, onLogout }) {
             {/* Active sessions */}
             <div style={{marginBottom:24}}>
               <p style={{fontSize:12,color:"var(--muted)",textTransform:"uppercase",letterSpacing:".1em",marginBottom:12,fontWeight:500}}>
-                Not Clocked Out / Currently Clocked In ({filteredActiveSessions.length})
+                Currently Clocked In ({filteredActiveSessions.length})
               </p>
               {filteredActiveSessions.length === 0 && (
                 <div className="card" style={{textAlign:"center",padding:"28px",color:"var(--muted)",fontSize:13}}>
@@ -2106,7 +2010,7 @@ function OwnerDashboard({ role, onLogout }) {
                 </div>
               )}
               {filteredActiveSessions.map(sess => {
-                const emp = fEmployees.find(e => e.id === sess.employeeId);
+                const emp = employeeById.get(sess.employeeId);
                 const elapsed = Math.floor((now - new Date(sess.clockIn)) / 1000);
                 const eStr = `${String(Math.floor(elapsed/3600)).padStart(2,"0")}:${String(Math.floor((elapsed%3600)/60)).padStart(2,"0")}:${String(elapsed%60).padStart(2,"0")}`;
                 const hrs = elapsed / 3600;
@@ -2143,14 +2047,22 @@ function OwnerDashboard({ role, onLogout }) {
             </div>
 
             {/* Today's completed sessions */}
-            <p style={{fontSize:12,color:"var(--muted)",textTransform:"uppercase",letterSpacing:".1em",marginBottom:12,fontWeight:500}}>Today&apos;s Completed Sessions</p>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,marginBottom:12,flexWrap:"wrap"}}>
+              <div>
+                <p style={{fontSize:12,color:"var(--muted)",textTransform:"uppercase",letterSpacing:".1em",fontWeight:500}}>Today&apos;s Completed Sessions</p>
+                <p style={{fontSize:13,color:"var(--text-2)",marginTop:3}}>
+                  {filteredTodayLogs.length} completed · {todayCompletedHours.toFixed(1)} total hrs
+                </p>
+              </div>
+              <button className="btn btn-ghost btn-sm" onClick={() => setTab("timesheet")}>View Timesheets</button>
+            </div>
             {(() => {
               if (filteredTodayLogs.length === 0) return (
                 <div className="card" style={{textAlign:"center",padding:"28px",color:"var(--muted)",fontSize:13}}>No completed sessions today</div>
               );
-              return filteredTodayLogs.map(l => {
-                const emp = fEmployees.find(e => e.id === l.employeeId);
-            const h = hoursWorked(l.clockIn, l.clockOut, l.breaks);
+              return recentTodayLogs.map(l => {
+                const emp = employeeById.get(l.employeeId);
+                const h = hoursWorked(l.clockIn, l.clockOut, l.breaks);
                 return (
                   <div key={l.id} className="card" style={{marginBottom:10,display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:10}}>
                     <div style={{textAlign: "left",minWidth:0,flex:"1 1 220px"}}>
@@ -2167,6 +2079,11 @@ function OwnerDashboard({ role, onLogout }) {
                 );
               });
             })()}
+            {filteredTodayLogs.length > recentTodayLogs.length && (
+              <p style={{fontSize:12,color:"var(--muted)",textAlign:"center",marginTop:12}}>
+                Showing the latest {recentTodayLogs.length} of {filteredTodayLogs.length} completed shifts.
+              </p>
+            )}
           </div>
         )}
 
@@ -2721,7 +2638,7 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
   const save = async () => {
     if (saving) return;
     if (!form.name || !form.pin || !form.branch) { setErr("Name, PIN, and Branch are required."); return; }
-    if (form.pin.length !== 4 || !/^\d+$/.test(form.pin)) { setErr("PIN must be 4 digits."); return; }
+    if (form.pin.length !== EMPLOYEE_PIN_LENGTH || !/^\d+$/.test(form.pin)) { setErr("PIN must be exactly 6 digits."); return; }
     const latestEmployees = await storage.get("employees");
     if (latestEmployees === undefined) { setErr("Could not load staff data. Check your connection and try again."); return; }
     const currentEmployees = Array.isArray(latestEmployees) ? latestEmployees : [];
@@ -2811,7 +2728,7 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
           <h3 style={{fontSize:16,marginBottom:16,color:"var(--gold)"}}>{editingId ? "Edit Employee" : "New Employee"}</h3>
           {[
             {label:"Full Name",     key:"name",       type:"text",   ph:"e.g. Jane Smith"},
-            {label:"4-Digit PIN",   key:"pin",        type:"text",   ph:"e.g. 5678"},
+            {label:"6-Digit PIN",   key:"pin",        type:"text",   ph:"e.g. 567890"},
             {label:"Employment Type", key:"employmentType", type:"select", options:["Full-time", "Part-time"]},
             {label:"Standard Hrs/Day", key:"standardHours", type:"number", ph:"e.g. 10"},
             {label:"Per Day Salary (₹)", key:"dailySalary", type:"number", ph:"e.g. 500"},
@@ -2825,14 +2742,22 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
                   {f.options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
                 </select>
               ) : (
-                <input type={f.type} placeholder={f.ph} value={form[f.key]}
+                <input
+                  type={f.type}
+                  placeholder={f.ph}
+                  value={form[f.key]}
+                  inputMode={f.key === "pin" ? "numeric" : undefined}
+                  maxLength={f.key === "pin" ? EMPLOYEE_PIN_LENGTH : undefined}
                   onChange={e => {
-                    const val = e.target.value;
+                    const val = f.key === "pin"
+                      ? e.target.value.replace(/\D/g, "").slice(0, EMPLOYEE_PIN_LENGTH)
+                      : e.target.value;
                     if (f.key === "dailySalary") setForm(p => ({...p, dailySalary: val, hourlyRate: val && p.standardHours ? (parseFloat(val)/parseFloat(p.standardHours)).toFixed(2) : p.hourlyRate}));
                     else if (f.key === "standardHours") setForm(p => ({...p, standardHours: val, hourlyRate: val && p.dailySalary ? (parseFloat(p.dailySalary)/parseFloat(val)).toFixed(2) : p.hourlyRate}));
                     else setForm(p => ({...p, [f.key]: val}));
                   }}
-                  className="input"/>
+                  className="input"
+                />
               )}
             </div>
           ))}

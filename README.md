@@ -134,7 +134,7 @@ registration so stale caches do not interfere with local work.
 - Owner, Manager, and Employee sessions terminate after 15 minutes without
   keyboard, pointer, scroll, or touch activity. Active staff sessions renew
   their signed HTTP-only cookie periodically.
-- Employee PIN behavior is preserved for compatibility. Review the Firestore
+- Employee login requires a unique six-digit numeric PIN. Review the Firestore
   security rules before exposing the system beyond its current trusted
   deployment model.
 - `firebase.json` points to the checked-in `firebase_rules` and empty
