@@ -29,8 +29,8 @@ See [README.md](README.md) for comprehensive feature documentation.
 - Single-file monolith: Use Ctrl+F to navigate App.jsx
 - No TypeScript: Rely on JSDoc for type hints
 - Master password in cleartext: Use encryption for production
-- Auto-cleanup on read: Data not deleted in real-time
-- Hard-coded Firebase config: Update lines 14-19 in App.jsx for different projects
+- No automatic retention cleanup: historical records remain until explicitly removed
+- Firebase web config comes from the `NEXT_PUBLIC_FIREBASE_*` variables in `.env.local`
 
 ## Key Files
 - [src/App.jsx](src/App.jsx): Root component with all logic and components

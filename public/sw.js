@@ -1,8 +1,7 @@
-const CACHE_NAME = 'amigos-connect-v5';
+const CACHE_NAME = 'amigos-connect-v6';
 const URLS_TO_CACHE = [
   '/',
-  '/index.html',
-  '/favicon.svg',
+  '/favicon.ico',
   '/logo.png'
 ];
 
@@ -30,10 +29,18 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Network-first for page navigations, Cache-first for static assets
+// Network-first for App Router navigations, cache-first for static assets.
 self.addEventListener('fetch', (event) => {
   if (event.request.mode === 'navigate') {
-    event.respondWith(fetch(event.request).catch(() => caches.match('/index.html')));
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put('/', copy));
+          return response;
+        })
+        .catch(() => caches.match('/'))
+    );
   } else {
     event.respondWith(caches.match(event.request).then((response) => response || fetch(event.request)));
   }

@@ -1,57 +1,127 @@
 # AMIGOS Connect
 
-AMIGOS Connect is a centralized, cloud-based platform built to help businesses effectively manage staff timesheets, monitor active shifts, handle leave requests, and calculate dynamic payrolls seamlessly. 
+AMIGOS Connect is a production-oriented Next.js PWA for staff management,
+attendance, leave requests, salary advances, and payroll reporting. It has an
+owner/manager dashboard and a PIN-based employee portal backed by the existing
+Firebase Firestore project.
 
-The platform serves two primary perspectives: the **Owner/Manager Portal** and the **Employee Portal**.
+## Technology
 
-## 👑 Owner / Manager Features
+- Next.js 16 App Router
+- React 19
+- TypeScript with strict checking for TypeScript modules
+- Firebase Firestore
+- Recharts
+- Lucide React
+- ESLint with the Next.js Core Web Vitals and TypeScript rules
 
-Access the owner dashboard by clicking **Owner / Manager** on the login screen and entering the master password.
+## Local setup
 
-* **Dashboard Overview:** Get a birds-eye view of your business. View total registered staff, active "clocked-in" sessions, pending leave & advance requests, and a visual Hours Distribution bar chart (toggleable between Weekly and Monthly).
-* **Live Clock:** See exactly who is working in real time. Displays active shifts with a ticking chronometer, accumulated earnings for the ongoing session, and a record of completed shifts for the day.
-* **Timesheets (Weekly/Monthly):** Review every clock-in and clock-out event by staff. Toggle between Weekly and Monthly views. Easily delete erroneous logs and export the view directly to a CSV file.
-* **Payroll Calculation:** Dynamic payroll calculating system that automatically extracts an **Hourly Rate** from a given **Per Day Salary** and standard shift hours. 
-  * **Overtime Handling:** Automatically calculates overtime hours dynamically if a shift exceeds the employee's standard hours, paying for those extra hours seamlessly at their standard hourly rate.
-  * **Net Pay:** Automatically deducts any approved/paid Salary Advances from the Gross Pay to give you a pristine Net Pay number.
-  * **Exports:** Toggle between Weekly/Monthly pay cycles and export a highly detailed Payroll CSV tracking Days Worked, Regular Hours, OT Hours, Total Hours, Gross Pay, Advances, and Net Pay.
-* **Leave Management:** Review leave requests submitted by staff members. Categorizes requests cleanly into 'Pending', 'Approved', and 'Declined'.
-* **Salary Advances:** A dedicated portal to manage advance requests from staff. Mark requests as 'Paid' to automatically inject the deduction into the staff member's next payroll cycle.
-* **Staff Management (CRUD):** 
-  * **Add Staff:** Assign an employee a PIN, Role, Branch, Payment Cycle (Weekly/Monthly), Daily Salary, and Standard Hrs/Day.
-  * **Edit/Update:** Quickly edit an existing employee's rates, branch, or roles without losing their timesheet history.
-  * **Search:** Built-in search bar to quickly filter and find employees by name.
-* **Branch Filtering:** A global top-bar dropdown allowing the owner to filter the entire dashboard (Staff, Payroll, Timesheets, Live Clock) to reflect data for a specific branch (e.g., Mens, Womens, Crazo, Warehouse).
-* **Settings Configuration:** 
-  * Change the default master password.
-  * Globally enable or disable the Leave Requests feature for all staff.
-  * Create, edit, and safely delete Store Branches for future expansion.
+1. Install dependencies:
 
----
+   ```bash
+   npm install
+   ```
 
-## 🧑‍💼 Employee Features
+2. Copy `.env.example` to `.env.local` and fill in the public Firebase web-app
+   configuration:
 
-Access the employee dashboard by clicking **Employee Login** on the login screen and entering the unique 4-digit PIN assigned by the Owner.
+   ```dotenv
+   NEXT_PUBLIC_FIREBASE_API_KEY=
+   NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=
+   NEXT_PUBLIC_FIREBASE_PROJECT_ID=
+   NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=
+   NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=
+   NEXT_PUBLIC_FIREBASE_APP_ID=
+   ```
 
-* **Live Shift Tracking:** An intuitive green "Clock In" and red "Clock Out" button. Once clocked in, employees can track their running shift chronometer in real-time right on their dashboard.
-* **Performance Analytics:** Employees can independently monitor their total hours worked and view a visual **Daily Earnings Bar Chart** summarizing their income per shift.
-* **Shift History:** Quick access to the most recently completed shifts, along with individual session lengths and timestamps.
-* **Leave Application:** A built-in form to request days off. Employees can select date ranges, specify a type of leave (Casual, Sick, Emergency), and add brief reasons. They can also track the status (Pending/Approved/Declined) directly from their portal.
-* **Advance Requests:** A form for employees to request a salary advance securely. They can specify an amount, give a reason, and track whether the owner has approved/paid it.
-* **Intelligent Protections:** Prevents employees from accidentally clocking in on a day they have an approved leave.
+   These values initialize the Firebase client SDK. Do not add Firebase Admin
+   credentials or other server secrets to `NEXT_PUBLIC_` variables.
 
----
+3. Start development:
 
-## 🚀 Technical Configuration
+   ```bash
+   npm run dev
+   ```
 
-* **Database:** Powered by Firebase Firestore (`amigos_store`). Automatically provisions NoSQL documents.
-* **State Persistence:** Persistent login sessions via `localStorage` allowing the user to stay signed in between app reloads.
-* **Data Management:** Cloud-synced data is dynamically cached locally, and auto-cleaned based on a 90-day Time-To-Live (TTL) implementation to avoid database buildup.
-* **PWA Ready:** Configured to be installable on mobile devices via a Web App Manifest and a robust Service Worker utilizing Network-First caching logic.
+4. Open <http://localhost:3000>.
 
-## 🔧 Setup & Installation
+## Production
 
-1. Clone the repository.
-2. Run `npm install` to install dependencies.
-3. Run `npm run dev` to start the Vite development server.
-4. Update Firebase Configurations in `App.jsx` if setting up a new separate Firestore environment.
+```bash
+npm run typecheck
+npm run lint
+npm run build
+npm run start
+```
+
+The production server uses port 3000 by default.
+
+## Project structure
+
+```text
+src/
+├── app/
+│   ├── error.tsx
+│   ├── layout.tsx
+│   ├── loading.tsx
+│   ├── manifest.ts
+│   ├── not-found.tsx
+│   └── page.tsx
+├── components/
+│   └── pwa/
+│       └── ServiceWorkerRegistration.tsx
+├── features/
+│   └── app/
+│       └── AppClient.jsx
+├── lib/
+│   └── firebase/
+│       └── client.ts
+├── services/
+│   └── storage.ts
+├── styles/
+│   └── globals.css
+└── types/
+    └── domain.ts
+```
+
+The route and layout are Server Components. `AppClient` is the browser boundary
+because the application uses local session storage, Firestore subscriptions,
+timers, install prompts, and interactive forms.
+
+## Data compatibility
+
+The existing Firestore collections and document structures are preserved:
+
+- `employees`
+- `timelogs`
+- `leaves`
+- `advances`
+- `branches`
+- `amigos_store/appSettings`
+- `amigos_store/ownerPass`
+
+The app starts with empty Firestore collections and contains no old-project
+migration, age-based retention, or automatic record deletion paths. Firebase
+initialization is guarded against duplicate initialization.
+
+## PWA behavior
+
+Next.js generates `/manifest.webmanifest` from `src/app/manifest.ts`. The service
+worker is registered only in production and uses a network-first strategy for
+App Router navigations. Development deliberately skips service-worker
+registration so stale caches do not interfere with local work.
+
+## Notes
+
+- The application currently applies India Standard Time (UTC+05:30) to automatic
+  clock-out behavior.
+- Owner and employee sessions remain client-side and automatically expire after
+  five minutes of inactivity.
+- PIN/password behavior is preserved for compatibility. Review the Firestore
+  security rules and migrate clear-text credentials before exposing the system
+  beyond its current trusted deployment model.
+- `firebase.json` points to the checked-in `firebase_rules` and empty
+  `firestore.indexes.json` files. Create a new Firebase project, add its web-app
+  values to `.env.local`, select the project with the Firebase CLI, and review
+  the rules before deploying them.
