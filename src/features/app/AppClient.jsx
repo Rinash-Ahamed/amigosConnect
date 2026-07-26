@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from "react";
 import { 
-  CheckCircle, StopCircle, Play, Coffee, User, Briefcase, Calendar, 
+  CheckCircle, StopCircle, User, Briefcase, Calendar, 
   Download, Clock, Check, X, Inbox, ClipboardList, IndianRupee, 
   Users, Settings, LayoutDashboard, Timer, Phone, Mail, MapPin, 
   Edit2, Trash2, Flag, Eye, EyeOff, ChevronLeft, ChevronRight
@@ -140,6 +140,14 @@ const hoursWorked = (clockIn, clockOut, breaks = []) => {
 const totalHours = (logs) =>
   logs.reduce((s, l) => s + hoursWorked(l.clockIn, l.clockOut, l.breaks), 0);
 const uid = () => Math.random().toString(36).slice(2, 10);
+const employeePortalProfile = (employee) => {
+  if (!employee) return employee;
+  const profile = { ...employee };
+  delete profile.dailySalary;
+  delete profile.hourlyRate;
+  delete profile.paymentCycle;
+  return profile;
+};
 const getAutoClockOutIso = (
   clockInIso,
   hourIst = DEFAULT_AUTO_CLOCK_OUT_HOUR_IST,
@@ -848,59 +856,15 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
     if (!window.confirm("Are you sure you want to clock out?")) return;
     setClocking(true);
     try {
-      let finalActive = { ...active };
       const clockOutIso = new Date().toISOString();
-      // auto-end any open break
-      if (finalActive.breaks && finalActive.breaks.length > 0) {
-        const lastBreak = finalActive.breaks[finalActive.breaks.length - 1];
-        if (!lastBreak.end) {
-          const updatedBreaks = [...finalActive.breaks];
-          updatedBreaks[updatedBreaks.length - 1] = { ...lastBreak, end: clockOutIso };
-          finalActive.breaks = updatedBreaks;
-        }
-      }
-      const updated = { ...finalActive, clockOut: clockOutIso };
-      if (!await storage.update("timelogs", active.id, { clockOut: clockOutIso, breaks: finalActive.breaks })) {
+      const legacyBreaks = closeOpenBreaksAt(active, clockOutIso);
+      const updated = { ...active, clockOut: clockOutIso, breaks: legacyBreaks };
+      if (!await storage.update("timelogs", active.id, { clockOut: clockOutIso, breaks: legacyBreaks })) {
         alert("Clock-out failed. Check your connection and try again.");
         return;
       }
       setLogs(p => p.map(l => l.id === active.id ? updated : l));
       setActive(null);
-    } finally {
-      setClocking(false);
-    }
-  };
-
-  const startBreak = async () => {
-    setClocking(true);
-    try {
-      const updatedBreaks = [...(active.breaks || []), { start: new Date().toISOString(), end: null }];
-      const updated = { ...active, breaks: updatedBreaks };
-      if (!await storage.update("timelogs", active.id, { breaks: updatedBreaks })) {
-        alert("Could not start the break. Check your connection and try again.");
-        return;
-      }
-      setLogs(p => p.map(l => l.id === active.id ? updated : l));
-      setActive(updated);
-    } finally {
-      setClocking(false);
-    }
-  };
-
-  const endBreak = async () => {
-    setClocking(true);
-    try {
-      const updatedBreaks = [...(active.breaks || [])];
-      if (updatedBreaks.length > 0 && !updatedBreaks[updatedBreaks.length - 1].end) {
-        updatedBreaks[updatedBreaks.length - 1] = { ...updatedBreaks[updatedBreaks.length - 1], end: new Date().toISOString() };
-      }
-      const updated = { ...active, breaks: updatedBreaks };
-      if (!await storage.update("timelogs", active.id, { breaks: updatedBreaks })) {
-        alert("Could not end the break. Check your connection and try again.");
-        return;
-      }
-      setLogs(p => p.map(l => l.id === active.id ? updated : l));
-      setActive(updated);
     } finally {
       setClocking(false);
     }
@@ -1081,19 +1045,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
                   <CheckCircle size={16} />&nbsp;{clocking ? "Processing..." : "Clock In"}
                 </button>
               ) : (
-                <div style={{display:"flex",flexDirection:"column",gap:10,marginTop:10}}>
-                  {(() => {
-                    const onBreak = active.breaks && active.breaks.length > 0 && !active.breaks[active.breaks.length - 1].end;
-                    return onBreak ? (
-                      <button className="btn btn-gold" disabled={clocking} style={{width:"100%",padding:"15px",fontSize:15,borderRadius:12,fontWeight:600}} onClick={endBreak}>
-                        <Play size={16} />&nbsp;{clocking ? "Processing..." : "Resume Work"}
-                      </button>
-                    ) : (
-                      <button className="btn btn-amber" disabled={clocking} style={{width:"100%",padding:"15px",fontSize:15,borderRadius:12,fontWeight:600}} onClick={startBreak}>
-                        <Coffee size={16} />&nbsp;{clocking ? "Processing..." : "Take a Break"}
-                      </button>
-                    );
-                  })()}
+                <div style={{marginTop:10}}>
                   <button className="btn btn-danger" disabled={clocking} style={{width:"100%",padding:"15px",fontSize:15,borderRadius:12,fontWeight:600}} onClick={clockOut}>
                     <StopCircle size={16} />&nbsp;{clocking ? "Processing..." : "Clock Out"}
                   </button>
@@ -1310,6 +1262,13 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
 function OwnerDashboard({ role, onLogout }) {
   const isOwner = role === "owner";
   const [tab, setTab] = useState("overview");
+
+  useEffect(() => {
+    if (!isOwner && (tab === "settings" || tab === "payroll")) {
+      setTab("overview");
+    }
+  }, [isOwner, tab]);
+
   const [selectedBranch, setSelectedBranch] = useState("All");
   const [employees, setEmployees] = useState([]);
   const [logs, setLogs] = useState([]);
@@ -2840,11 +2799,16 @@ export function AppClient() {
         }
         const saved = localStorage.getItem("amigos_employee_session");
         const employeeSession = saved ? JSON.parse(saved) : null;
-        setSession(
-          employeeSession?.role === "employee" && employeeSession?.employee
-            ? employeeSession
-            : null,
-        );
+        if (employeeSession?.role === "employee" && employeeSession?.employee) {
+          const safeEmployeeSession = {
+            ...employeeSession,
+            employee: employeePortalProfile(employeeSession.employee),
+          };
+          localStorage.setItem("amigos_employee_session", JSON.stringify(safeEmployeeSession));
+          setSession(safeEmployeeSession);
+        } else {
+          setSession(null);
+        }
         localStorage.removeItem("amigos_session");
       } catch {
         setSession(null);
@@ -2855,7 +2819,10 @@ export function AppClient() {
   }, []);
 
   const handleLogin = (role, emp) => {
-    const s = { role, employee: emp };
+    const s = {
+      role,
+      employee: role === "employee" ? employeePortalProfile(emp) : emp,
+    };
     setSession(s);
     if (role === "employee") {
       localStorage.setItem("amigos_employee_session", JSON.stringify(s));
