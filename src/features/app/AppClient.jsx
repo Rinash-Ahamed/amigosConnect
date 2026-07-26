@@ -34,31 +34,49 @@ const storage = {
     }
   },
   async set(key, val) {
-    if (!db) return;
+    if (!db) return false;
     try {
       if (key === "appSettings") {
         await setDoc(doc(db, "amigos_store", key), { value: val }, { merge: true });
+        return true;
       } else {
         console.warn(`storage.set called on collection ${key}. Use add/update/remove instead.`);
+        return false;
       }
     } catch (e) {
       console.error("Firebase SET error:", e);
+      return false;
     }
   },
   async add(key, item) {
-    if (!db) return;
-    try { await setDoc(doc(db, key, item.id), item); } 
-    catch (e) { console.error(`Firebase ADD error:`, e); }
+    if (!db) return false;
+    try {
+      await setDoc(doc(db, key, item.id), item);
+      return true;
+    } catch (e) {
+      console.error(`Firebase ADD error:`, e);
+      return false;
+    }
   },
   async update(key, id, updates) {
-    if (!db) return;
-    try { await setDoc(doc(db, key, id), updates, { merge: true }); } 
-    catch (e) { console.error(`Firebase UPDATE error:`, e); }
+    if (!db) return false;
+    try {
+      await setDoc(doc(db, key, id), updates, { merge: true });
+      return true;
+    } catch (e) {
+      console.error(`Firebase UPDATE error:`, e);
+      return false;
+    }
   },
   async remove(key, id) {
-    if (!db) return;
-    try { await deleteDoc(doc(db, key, id)); } 
-    catch (e) { console.error(`Firebase REMOVE error:`, e); }
+    if (!db) return false;
+    try {
+      await deleteDoc(doc(db, key, id));
+      return true;
+    } catch (e) {
+      console.error(`Firebase REMOVE error:`, e);
+      return false;
+    }
   },
   subscribe(key, callback) {
     if (!db) {
@@ -78,12 +96,10 @@ const storage = {
   }
 };
 
-// ── Seed data ──
-const SEED_EMPLOYEES = [];
-
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 const DEFAULT_AUTO_CLOCK_OUT_HOUR_IST = 23;
 const DEFAULT_AUTO_CLOCK_OUT_MINUTE_IST = 0;
+const todayIstDate = () => new Date(Date.now() + IST_OFFSET_MS).toISOString().slice(0, 10);
 const defaultSettings = () => ({
   leavesEnabled: true,
   autoClockOutEnabled: true,
@@ -188,8 +204,6 @@ const downloadCSV = (filename, rows) => {
   link.download = filename;
   link.click();
 };
-const isWindows = typeof window !== "undefined" && /windows/i.test(window.navigator.userAgent);
-
 // ── Lazy Loaded Components ──
 // Dynamically import Recharts so it doesn't block the initial app load
 const LazyChart = lazy(async () => {
@@ -505,8 +519,6 @@ function PinPad({ value, onChange, maxLen = 4 }) {
 
 // ── Login Screen ──
 function LoginScreen({ onLogin }) {
-  const detectIOS = () => typeof window !== "undefined" && /iphone|ipad|ipod/.test(window.navigator.userAgent.toLowerCase());
-  const detectStandalone = () => typeof window !== "undefined" && ("standalone" in window.navigator) && window.navigator.standalone;
   const [mode, setMode] = useState(null);
   const [pin, setPin] = useState("");
   const [pass, setPass] = useState("");
@@ -514,10 +526,18 @@ function LoginScreen({ onLogin }) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [installPrompt, setInstallPrompt] = useState(null);
-  const [isIOS] = useState(detectIOS);
-  const [isStandalone] = useState(detectStandalone);
+  const [isIOS, setIsIOS] = useState(false);
+  const [isStandalone, setIsStandalone] = useState(false);
   const [showPass, setShowPass] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    setIsIOS(/iphone|ipad|ipod/i.test(window.navigator.userAgent));
+    setIsStandalone(
+      window.matchMedia("(display-mode: standalone)").matches ||
+      window.navigator.standalone === true,
+    );
+  }, []);
 
   useEffect(() => {
     const handleInstallPrompt = (e) => {
@@ -541,10 +561,8 @@ function LoginScreen({ onLogin }) {
       if (emps === undefined) {
         setError("Could not load staff data. Check your connection and try again.");
         emps = [];
-      } else if (emps === null) {
-        emps = SEED_EMPLOYEES;
       }
-      setEmployees(emps);
+      setEmployees(Array.isArray(emps) ? emps : []);
       setLoading(false);
     })();
   }, []);
@@ -698,7 +716,7 @@ function LoginScreen({ onLogin }) {
       )}
 
       {/* Manual Install Button for Android/Mac */}
-      {installPrompt && !mode && !isIOS && !isWindows && (
+      {installPrompt && !mode && !isIOS && (
         <div className="fade-up" style={{position:"absolute", bottom: 30}}>
           <button className="btn btn-outline btn-sm" style={{background:"var(--card)", color:"var(--gold)", border:"1px solid var(--gold-dim)"}} onClick={handleInstall}>
             <Download size={14}/> Install Amigos App
@@ -728,11 +746,13 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
   const [leaveForm, setLeaveForm] = useState({ from:"", to:"", type:"Casual", reason:"" });
   const [leaveErr, setLeaveErr] = useState("");
   const [leaveSent, setLeaveSent] = useState(false);
+  const [leaveSubmitting, setLeaveSubmitting] = useState(false);
   const [settings, setSettings] = useState(defaultSettings());
   const [advances, setAdvances] = useState([]);
   const [advanceForm, setAdvanceForm] = useState({ amount: "", reason: "" });
   const [advanceErr, setAdvanceErr] = useState("");
   const [advanceSent, setAdvanceSent] = useState(false);
+  const [advanceSubmitting, setAdvanceSubmitting] = useState(false);
   const [clocking, setClocking] = useState(false);
   const [profileForm, setProfileForm] = useState({
     phone: employee.phone || "",
@@ -741,19 +761,29 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
     address: employee.address || ""
   });
   const [profileSaved, setProfileSaved] = useState(false);
+  const [profileSaving, setProfileSaving] = useState(false);
 
   const saveProfile = async () => {
+    if (profileSaving) return;
+    setProfileSaving(true);
     const allEmps = await storage.get("employees");
     if (!Array.isArray(allEmps)) {
       alert("Could not load staff data. Please check your connection and try again.");
+      setProfileSaving(false);
       return;
     }
     if (!allEmps.some(e => e.id === employee.id)) {
       alert("Your staff profile was not found. Please ask the owner to refresh staff data.");
+      setProfileSaving(false);
       return;
     }
     const updatedEmp = { ...employee, ...profileForm };
-    await storage.update("employees", employee.id, updatedEmp);
+    const saved = await storage.update("employees", employee.id, updatedEmp);
+    setProfileSaving(false);
+    if (!saved) {
+      alert("Profile update failed. Check your connection and try again.");
+      return;
+    }
     if(onUpdateEmployee) onUpdateEmployee(updatedEmp);
     setProfileSaved(true);
     setTimeout(() => setProfileSaved(false), 3000);
@@ -785,23 +815,28 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
       setAdvances(allAdvances.filter(a => a.employeeId === employee.id));
       
       setSettings(st);
-      if (st.leavesEnabled === false && view === "leave") setView("home");
+      if (st.leavesEnabled === false) {
+        setView(currentView => currentView === "leave" ? "home" : currentView);
+      }
     })();
-  }, [employee.id, view]);
+  }, [employee.id]);
 
   const clockIn = async () => {
     if (!window.confirm("Are you sure you want to clock in?")) return;
     setClocking(true);
     try {
       const allLeaves = (await storage.get("leaves")) || [];
-      const today = new Date().toISOString().split("T")[0];
+      const today = todayIstDate();
       const onLeave = allLeaves.find(l =>
         l.employeeId === employee.id && l.status === "approved" &&
         today >= l.from && today <= l.to
       );
       if (onLeave) { alert("You are on approved leave today and cannot clock in."); return; }
       const log = { id: uid(), employeeId: employee.id, name: employee.name, clockIn: new Date().toISOString(), clockOut: null };
-      await storage.add("timelogs", log);
+      if (!await storage.add("timelogs", log)) {
+        alert("Clock-in failed. Check your connection and try again.");
+        return;
+      }
       setLogs(p => [...p, log]);
       setActive(log);
     } finally {
@@ -825,7 +860,10 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
         }
       }
       const updated = { ...finalActive, clockOut: clockOutIso };
-      await storage.update("timelogs", active.id, { clockOut: clockOutIso, breaks: finalActive.breaks });
+      if (!await storage.update("timelogs", active.id, { clockOut: clockOutIso, breaks: finalActive.breaks })) {
+        alert("Clock-out failed. Check your connection and try again.");
+        return;
+      }
       setLogs(p => p.map(l => l.id === active.id ? updated : l));
       setActive(null);
     } finally {
@@ -838,7 +876,10 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
     try {
       const updatedBreaks = [...(active.breaks || []), { start: new Date().toISOString(), end: null }];
       const updated = { ...active, breaks: updatedBreaks };
-      await storage.update("timelogs", active.id, { breaks: updatedBreaks });
+      if (!await storage.update("timelogs", active.id, { breaks: updatedBreaks })) {
+        alert("Could not start the break. Check your connection and try again.");
+        return;
+      }
       setLogs(p => p.map(l => l.id === active.id ? updated : l));
       setActive(updated);
     } finally {
@@ -854,7 +895,10 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
         updatedBreaks[updatedBreaks.length - 1] = { ...updatedBreaks[updatedBreaks.length - 1], end: new Date().toISOString() };
       }
       const updated = { ...active, breaks: updatedBreaks };
-      await storage.update("timelogs", active.id, { breaks: updatedBreaks });
+      if (!await storage.update("timelogs", active.id, { breaks: updatedBreaks })) {
+        alert("Could not end the break. Check your connection and try again.");
+        return;
+      }
       setLogs(p => p.map(l => l.id === active.id ? updated : l));
       setActive(updated);
     } finally {
@@ -863,6 +907,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
   };
 
   const submitLeave = async () => {
+    if (leaveSubmitting) return;
     setLeaveErr("");
     if (!leaveForm.from || !leaveForm.to || !leaveForm.reason.trim()) {
       setLeaveErr("All fields are required."); return;
@@ -878,7 +923,13 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
       status: "pending",
       appliedAt: new Date().toISOString(),
     };
-    await storage.add("leaves", req);
+    setLeaveSubmitting(true);
+    const saved = await storage.add("leaves", req);
+    setLeaveSubmitting(false);
+    if (!saved) {
+      setLeaveErr("Could not submit the request. Check your connection and try again.");
+      return;
+    }
     setLeaves(p => [...p, req]);
     setLeaveForm({ from:"", to:"", type:"Casual", reason:"" });
     setLeaveSent(true);
@@ -886,6 +937,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
   };
 
   const submitAdvance = async () => {
+    if (advanceSubmitting) return;
     setAdvanceErr("");
     if (!advanceForm.amount || !advanceForm.reason.trim()) {
       setAdvanceErr("All fields are required."); return;
@@ -902,7 +954,13 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
       status: "pending",
       appliedAt: new Date().toISOString(),
     };
-    await storage.add("advances", req);
+    setAdvanceSubmitting(true);
+    const saved = await storage.add("advances", req);
+    setAdvanceSubmitting(false);
+    if (!saved) {
+      setAdvanceErr("Could not submit the request. Check your connection and try again.");
+      return;
+    }
     setAdvances(p => [...p, req]);
     setAdvanceForm({ amount:"", reason:"" });
     setAdvanceSent(true);
@@ -988,7 +1046,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
         ))}
       </nav>
 
-      <div style={{padding:20,maxWidth: isWindows ? "100%" : 500,margin:"0 auto"}}>
+      <div style={{padding:20,maxWidth:560,margin:"0 auto"}}>
 
         {view === "home" && (
           <div className="fade-up">
@@ -1096,13 +1154,13 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
                 <div>
                   <label className="field-label">From Date</label>
                   <input type="date" className="input" value={leaveForm.from}
-                    min={new Date().toISOString().split("T")[0]}
+                    min={todayIstDate()}
                     onChange={e => setLeaveForm(p=>({...p,from:e.target.value}))}/>
                 </div>
                 <div>
                   <label className="field-label">To Date</label>
                   <input type="date" className="input" value={leaveForm.to}
-                    min={leaveForm.from || new Date().toISOString().split("T")[0]}
+                    min={leaveForm.from || todayIstDate()}
                     onChange={e => setLeaveForm(p=>({...p,to:e.target.value}))}/>
                 </div>
               </div>
@@ -1123,7 +1181,9 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
               </div>
               {leaveErr && <p style={{color:"var(--danger)",fontSize:13,marginBottom:10,padding:"8px 12px",background:"var(--danger-bg)",borderRadius:7}}>{leaveErr}</p>}
               {leaveSent && <p style={{color:"var(--success)",fontSize:13,marginBottom:10,padding:"8px 12px",background:"var(--success-bg)",borderRadius:7}}><CheckCircle size={16} style={{display:"inline", verticalAlign:"middle", marginRight:4}} /> Leave request submitted successfully.</p>}
-              <button className="btn btn-gold" style={{width:"100%"}} onClick={submitLeave}>Submit Request</button>
+              <button className="btn btn-gold" style={{width:"100%"}} disabled={leaveSubmitting} onClick={submitLeave}>
+                {leaveSubmitting ? "Submitting…" : "Submit Request"}
+              </button>
             </div>
 
             {/* Leave history */}
@@ -1191,7 +1251,9 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
                   style={{resize:"vertical",minHeight:60}}/>
               </div>
               {profileSaved && <p style={{color:"var(--success)",fontSize:13,marginBottom:10,padding:"8px 12px",background:"var(--success-bg)",borderRadius:7}}><CheckCircle size={16} style={{display:"inline", verticalAlign:"middle", marginRight:4}} /> Profile updated successfully.</p>}
-              <button className="btn btn-gold" style={{width:"100%"}} onClick={saveProfile}>Save Profile</button>
+              <button className="btn btn-gold" style={{width:"100%"}} disabled={profileSaving} onClick={saveProfile}>
+                {profileSaving ? "Saving…" : "Save Profile"}
+              </button>
             </div>
           </div>
         )}
@@ -1215,7 +1277,9 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
               </div>
               {advanceErr && <p style={{color:"var(--danger)",fontSize:13,marginBottom:10,padding:"8px 12px",background:"var(--danger-bg)",borderRadius:7}}>{advanceErr}</p>}
               {advanceSent && <p style={{color:"var(--success)",fontSize:13,marginBottom:10,padding:"8px 12px",background:"var(--success-bg)",borderRadius:7}}><CheckCircle size={16} style={{display:"inline", verticalAlign:"middle", marginRight:4}} /> Advance request submitted successfully.</p>}
-              <button className="btn btn-gold" style={{width:"100%"}} onClick={submitAdvance}>Submit Request</button>
+              <button className="btn btn-gold" style={{width:"100%"}} disabled={advanceSubmitting} onClick={submitAdvance}>
+                {advanceSubmitting ? "Submitting…" : "Submit Request"}
+              </button>
             </div>
 
             {/* Advance history */}
@@ -1293,7 +1357,7 @@ function OwnerDashboard({ role, onLogout }) {
 
     const unsubs = [
       storage.subscribe("employees", (data) => {
-        setEmployees(Array.isArray(data) && data.length > 0 ? data : SEED_EMPLOYEES);
+        setEmployees(Array.isArray(data) ? data : []);
         checkLoaded();
       }),
       storage.subscribe("appSettings", (data) => {
@@ -1437,28 +1501,48 @@ function OwnerDashboard({ role, onLogout }) {
   const deleteLog = async (id) => {
     if (!window.confirm("Are you sure you want to delete this timesheet record?")) return;
     const n = logs.filter(l => l.id !== id);
-    await storage.remove("timelogs", id); setLogs(n);
+    if (!await storage.remove("timelogs", id)) {
+      alert("Could not delete the timesheet record.");
+      return;
+    }
+    setLogs(n);
   };
 
   const approveLeave = async (id) => {
     const n = leaves.map(l => l.id === id ? {...l, status:"approved"} : l);
-    await storage.update("leaves", id, { status:"approved" }); setLeaves(n);
+    if (!await storage.update("leaves", id, { status:"approved" })) {
+      alert("Could not approve the leave request.");
+      return;
+    }
+    setLeaves(n);
   };
 
   const rejectLeave = async (id) => {
     const n = leaves.map(l => l.id === id ? {...l, status:"rejected"} : l);
-    await storage.update("leaves", id, { status:"rejected" }); setLeaves(n);
+    if (!await storage.update("leaves", id, { status:"rejected" })) {
+      alert("Could not reject the leave request.");
+      return;
+    }
+    setLeaves(n);
   };
 
   const markAdvancePaid = async (id) => {
     const paidAt = new Date().toISOString();
     const n = advances.map(a => a.id === id ? {...a, status:"paid", paidAt} : a);
-    await storage.update("advances", id, { status:"paid", paidAt }); setAdvances(n);
+    if (!await storage.update("advances", id, { status:"paid", paidAt })) {
+      alert("Could not mark the advance as paid.");
+      return;
+    }
+    setAdvances(n);
   };
 
   const rejectAdvance = async (id) => {
     const n = advances.map(a => a.id === id ? {...a, status:"rejected"} : a);
-    await storage.update("advances", id, { status:"rejected" }); setAdvances(n);
+    if (!await storage.update("advances", id, { status:"rejected" })) {
+      alert("Could not reject the advance.");
+      return;
+    }
+    setAdvances(n);
   };
 
   const clockOutAllActive = async () => {
@@ -1466,9 +1550,13 @@ function OwnerDashboard({ role, onLogout }) {
     const nowIso = new Date().toISOString();
     const activeIds = new Set(filteredActiveSessions.map(s => s.id));
     const updatedLogs = logs.map(l => activeIds.has(l.id) ? { ...l, clockOut: nowIso, breaks: closeOpenBreaksAt(l, nowIso) } : l);
-    await Promise.all(filteredActiveSessions.map(sess => 
+    const results = await Promise.all(filteredActiveSessions.map(sess =>
       storage.update("timelogs", sess.id, { clockOut: nowIso, breaks: closeOpenBreaksAt(sess, nowIso) })
     ));
+    if (results.some(result => !result)) {
+      alert("Some employees could not be clocked out. The dashboard will refresh successful updates.");
+      return;
+    }
     setLogs(updatedLogs);
   };
 
@@ -1477,14 +1565,21 @@ function OwnerDashboard({ role, onLogout }) {
     const nowIso = new Date().toISOString();
     const updatedLogs = logs.map(l => l.id === id ? { ...l, clockOut: nowIso, breaks: closeOpenBreaksAt(l, nowIso) } : l);
     const l = logs.find(l => l.id === id);
-    await storage.update("timelogs", id, { clockOut: nowIso, breaks: closeOpenBreaksAt(l, nowIso) });
+    if (!l || !await storage.update("timelogs", id, { clockOut: nowIso, breaks: closeOpenBreaksAt(l, nowIso) })) {
+      alert(`Could not clock out ${name}.`);
+      return;
+    }
     setLogs(updatedLogs);
   };
 
   const updateSettings = async (newSt) => {
     const updated = { ...settings, ...newSt };
+    if (!await storage.set("appSettings", updated)) {
+      alert("Could not save settings.");
+      return false;
+    }
     setSettings(updated);
-    await storage.set("appSettings", updated);
+    return true;
   };
 
   const saveEditBranch = async (oldName) => {
@@ -1497,9 +1592,12 @@ function OwnerDashboard({ role, onLogout }) {
     const updatedBranches = settings.branches.map(b => b === oldName ? nb : b);
     const updatedEmployees = latestEmployees.map(e => e.branch === oldName ? { ...e, branch: nb } : e);
     const changedEmps = latestEmployees.filter(e => e.branch === oldName);
-    await Promise.all(changedEmps.map(e => storage.update("employees", e.id, { branch: nb })));
+    const employeeResults = await Promise.all(changedEmps.map(e => storage.update("employees", e.id, { branch: nb })));
+    if (employeeResults.some(result => !result) || !await updateSettings({ branches: updatedBranches })) {
+      alert("The branch could not be fully updated. Refresh and try again.");
+      return;
+    }
     setEmployees(updatedEmployees);
-    updateSettings({ branches: updatedBranches });
     setEditingBranch(null);
     if (selectedBranch === oldName) setSelectedBranch(nb);
   };
@@ -1512,9 +1610,12 @@ function OwnerDashboard({ role, onLogout }) {
     const updatedBranches = settings.branches.filter(b => b !== branchName);
     const updatedEmployees = latestEmployees.map(e => e.branch === branchName ? { ...e, branch: "" } : e);
     const changedEmps = latestEmployees.filter(e => e.branch === branchName);
-    await Promise.all(changedEmps.map(e => storage.update("employees", e.id, { branch: "" })));
+    const employeeResults = await Promise.all(changedEmps.map(e => storage.update("employees", e.id, { branch: "" })));
+    if (employeeResults.some(result => !result) || !await updateSettings({ branches: updatedBranches })) {
+      alert("The branch could not be fully removed. Refresh and try again.");
+      return;
+    }
     setEmployees(updatedEmployees);
-    updateSettings({ branches: updatedBranches });
     if (selectedBranch === branchName) setSelectedBranch("All");
   };
 
@@ -1566,11 +1667,8 @@ function OwnerDashboard({ role, onLogout }) {
         rows.push([emp.name, emp.branch || "—", fmtDate(l.clockIn), fmt(l.clockIn), l.clockOut ? fmt(l.clockOut) : "Open", h.toFixed(2)]);
       });
     });
-    const csv = rows.map(r => r.join(",")).join("\n");
-    const a = document.createElement("a");
-    a.href = "data:text/csv;charset=utf-8," + encodeURIComponent(csv);
     const timestamp = new Date().toISOString().slice(0,19).replace(/:/g, "-");
-    a.download = `timesheets-${tsMode}-${timestamp}.csv`; a.click();
+    downloadCSV(`timesheets-${tsMode}-${timestamp}.csv`, rows);
   };
 
   const prEmployees = fEmployees.filter(emp => {
@@ -1607,12 +1705,8 @@ function OwnerDashboard({ role, onLogout }) {
     ]);
   });
 
-  const csv = rows.map(r => r.join(",")).join("\n");
-  const a = document.createElement("a");
-  a.href = "data:text/csv;charset=utf-8," + encodeURIComponent(csv);
   const timestamp = new Date().toISOString().slice(0,19).replace(/:/g, "-");
-  a.download = `payroll-${prMode}-${timestamp}.csv`; 
-  a.click();
+  downloadCSV(`payroll-${prMode}-${timestamp}.csv`, rows);
 };
 
   const exportAdvancesCSV = () => {
@@ -1623,18 +1717,14 @@ function OwnerDashboard({ role, onLogout }) {
         emp ? emp.name : "Unknown",
         emp ? (emp.branch || "—") : "—",
         a.amount,
-        `"${(a.reason || "").replace(/"/g, '""')}"`,
+        a.reason || "",
         a.status,
         fmtDate(a.appliedAt),
         a.paidAt ? fmtDate(a.paidAt) : (a.status === 'paid' ? fmtDate(a.appliedAt) : "—")
       ]);
     });
-    const csv = rows.map(r => r.join(",")).join("\n");
-    const link = document.createElement("a");
-    link.href = "data:text/csv;charset=utf-8," + encodeURIComponent(csv);
     const timestamp = new Date().toISOString().slice(0,19).replace(/:/g, "-");
-    link.download = `advances-${timestamp}.csv`; 
-    link.click();
+    downloadCSV(`advances-${timestamp}.csv`, rows);
   };
 
   const exportStaffCSV = () => {
@@ -1817,7 +1907,7 @@ function OwnerDashboard({ role, onLogout }) {
         </select>
       </div>
 
-      <div style={{padding:20,maxWidth: isWindows ? "100%" : 860,margin:"0 auto"}}>
+      <div style={{padding:20,maxWidth:1200,margin:"0 auto"}}>
 
         {/* ── OVERVIEW ── */}
         {tab === "overview" && (
@@ -2513,8 +2603,10 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
   const [form, setForm] = useState({name:"",pin:"",employmentType:"Full-time",standardHours:"10",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly", phone:"", email:"", gender:"", address:""});
   const [err, setErr] = useState("");
   const [confirmRemoveId, setConfirmRemoveId] = useState(null);
+  const [saving, setSaving] = useState(false);
 
   const save = async () => {
+    if (saving) return;
     if (!form.name || !form.pin || !form.branch) { setErr("Name, PIN, and Branch are required."); return; }
     if (form.pin.length !== 4 || !/^\d+$/.test(form.pin)) { setErr("PIN must be 4 digits."); return; }
     const latestEmployees = await storage.get("employees");
@@ -2532,14 +2624,24 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
       delete baseEmp.dailySalary;
       delete baseEmp.paymentCycle;
     }
+    setSaving(true);
     if (editingId) {
-      await storage.update("employees", editingId, baseEmp);
+      if (!await storage.update("employees", editingId, baseEmp)) {
+        setErr("Could not update the employee. Check your connection and try again.");
+        setSaving(false);
+        return;
+      }
       updated = currentEmployees.map(e => e.id === editingId ? { ...e, ...baseEmp } : e);
     } else {
       const emp = { id: uid(), ...baseEmp };
-      await storage.add("employees", emp);
+      if (!await storage.add("employees", emp)) {
+        setErr("Could not add the employee. Check your connection and try again.");
+        setSaving(false);
+        return;
+      }
       updated = [...currentEmployees, emp];
     }
+    setSaving(false);
     setEmployees(updated);
     setForm({name:"",pin:"",employmentType:"Full-time",standardHours:"10",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly", phone:"", email:"", gender:"", address:""});
     setAdding(false); setEditingId(null); setErr(""); setConfirmRemoveId(null);
@@ -2549,7 +2651,10 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
     const latestEmployees = await storage.get("employees");
     if (!Array.isArray(latestEmployees)) { alert("Could not load staff data. Please check your connection and try again."); return; }
     const updated = latestEmployees.filter(e=>e.id!==id);
-    await storage.remove("employees", id);
+    if (!await storage.remove("employees", id)) {
+      alert("Could not remove the employee.");
+      return;
+    }
     setEmployees(updated);
     setConfirmRemoveId(null);
     
@@ -2670,7 +2775,9 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
             </div>
           </div>
           {err && <p style={{color:"var(--danger)",fontSize:13,marginBottom:12,padding:"8px 12px",background:"var(--danger-bg)",borderRadius:7}}>{err}</p>}
-          <button className="btn btn-gold" style={{width:"100%"}} onClick={save}>Save Employee</button>
+          <button className="btn btn-gold" style={{width:"100%"}} disabled={saving} onClick={save}>
+            {saving ? "Saving…" : "Save Employee"}
+          </button>
         </div>
       )}
 
