@@ -97,6 +97,8 @@ const storage = {
 };
 
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+const SESSION_IDLE_TIMEOUT_MS = 15 * 60 * 1000;
+const SESSION_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const DEFAULT_AUTO_CLOCK_OUT_HOUR_IST = 23;
 const DEFAULT_AUTO_CLOCK_OUT_MINUTE_IST = 0;
 const todayIstDate = () => new Date(Date.now() + IST_OFFSET_MS).toISOString().slice(0, 10);
@@ -2907,7 +2909,12 @@ export function AppClient() {
         }
         const saved = localStorage.getItem("amigos_employee_session");
         const employeeSession = saved ? JSON.parse(saved) : null;
-        if (employeeSession?.role === "employee" && employeeSession?.employee) {
+        const employeeSessionIsActive =
+          employeeSession?.role === "employee" &&
+          employeeSession?.employee &&
+          Number.isFinite(employeeSession.lastActivityAt) &&
+          Date.now() - employeeSession.lastActivityAt < SESSION_IDLE_TIMEOUT_MS;
+        if (employeeSessionIsActive) {
           const safeEmployeeSession = {
             ...employeeSession,
             employee: employeePortalProfile(employeeSession.employee),
@@ -2930,6 +2937,7 @@ export function AppClient() {
     const s = {
       role,
       employee: role === "employee" ? employeePortalProfile(emp) : emp,
+      ...(role === "employee" ? { lastActivityAt: Date.now() } : {}),
     };
     setSession(s);
     if (role === "employee") {
@@ -2952,11 +2960,37 @@ export function AppClient() {
   useEffect(() => {
     if (!session) return;
     let timeoutId;
+    let lastRefreshAt = Date.now();
     const resetTimer = () => {
       clearTimeout(timeoutId);
       timeoutId = setTimeout(() => {
         handleLogout();
-      }, 5 * 60 * 1000); // 5 minutes
+      }, SESSION_IDLE_TIMEOUT_MS);
+
+      const activityAt = Date.now();
+      if (activityAt - lastRefreshAt < SESSION_REFRESH_INTERVAL_MS) return;
+      lastRefreshAt = activityAt;
+
+      if (session.role === "employee") {
+        const saved = localStorage.getItem("amigos_employee_session");
+        const employeeSession = saved ? JSON.parse(saved) : null;
+        if (employeeSession?.role === "employee") {
+          localStorage.setItem(
+            "amigos_employee_session",
+            JSON.stringify({...employeeSession,lastActivityAt:activityAt}),
+          );
+        }
+        return;
+      }
+
+      void fetch("/api/auth/session", {
+        method: "POST",
+        keepalive: true,
+      }).then(response => {
+        if (!response.ok) handleLogout();
+      }).catch(() => {
+        // A temporary refresh failure should not interrupt an active session.
+      });
     };
 
     resetTimer();

@@ -1,13 +1,36 @@
-import { cookies } from "next/headers";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
-import { readStaffSession, STAFF_SESSION_COOKIE } from "@/lib/auth/session";
+import {
+  createStaffSession,
+  isSecureRequest,
+  readStaffSession,
+  STAFF_SESSION_COOKIE,
+  STAFF_SESSION_TTL_SECONDS,
+} from "@/lib/auth/session";
 
-export async function GET() {
-  const cookieStore = await cookies();
-  const session = readStaffSession(cookieStore.get(STAFF_SESSION_COOKIE)?.value);
+function refreshSession(request: NextRequest) {
+  const session = readStaffSession(
+    request.cookies.get(STAFF_SESSION_COOKIE)?.value,
+  );
   if (!session) {
     return NextResponse.json({ role: null }, { status: 401 });
   }
-  return NextResponse.json({ role: session.role });
+
+  const response = NextResponse.json({ role: session.role });
+  response.cookies.set(STAFF_SESSION_COOKIE, createStaffSession(session.role), {
+    httpOnly: true,
+    sameSite: "strict",
+    secure: isSecureRequest(request),
+    path: "/",
+    maxAge: STAFF_SESSION_TTL_SECONDS,
+  });
+  return response;
+}
+
+export async function GET(request: NextRequest) {
+  return refreshSession(request);
+}
+
+export async function POST(request: NextRequest) {
+  return refreshSession(request);
 }

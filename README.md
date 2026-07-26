@@ -131,8 +131,9 @@ registration so stale caches do not interfere with local work.
 - Owner has payroll, salary advance, salary-field, export, and settings access.
 - Manager can manage attendance, leave, and staff profiles but salary-sensitive
   navigation and values are excluded.
-- Signed Owner and Manager sessions expire after five minutes. Employee PIN
-  sessions remain client-side and use the same inactivity timeout.
+- Owner, Manager, and Employee sessions terminate after 15 minutes without
+  keyboard, pointer, scroll, or touch activity. Active staff sessions renew
+  their signed HTTP-only cookie periodically.
 - Employee PIN behavior is preserved for compatibility. Review the Firestore
   security rules before exposing the system beyond its current trusted
   deployment model.

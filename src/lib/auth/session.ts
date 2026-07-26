@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 export const STAFF_SESSION_COOKIE = "amigos_staff_session";
-export const STAFF_SESSION_TTL_SECONDS = 5 * 60;
+export const STAFF_SESSION_TTL_SECONDS = 15 * 60;
 
 export type StaffRole = "owner" | "manager";
 
