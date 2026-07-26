@@ -35,8 +35,17 @@ Firebase Firestore project.
    NEXT_PUBLIC_FIREBASE_APP_ID=
    ```
 
-   These values initialize the Firebase client SDK. Do not add Firebase Admin
-   credentials or other server secrets to `NEXT_PUBLIC_` variables.
+   Also configure distinct server-only staff credentials:
+
+   ```dotenv
+   OWNER_PASSWORD=
+   MANAGER_PASSWORD=
+   AUTH_SECRET=
+   ```
+
+   Use a long random value for `AUTH_SECRET`. Firebase web-app values initialize
+   the client SDK; passwords and `AUTH_SECRET` must never use a `NEXT_PUBLIC_`
+   prefix.
 
 3. Start development:
 
@@ -86,8 +95,9 @@ src/
 ```
 
 The route and layout are Server Components. `AppClient` is the browser boundary
-because the application uses local session storage, Firestore subscriptions,
-timers, install prompts, and interactive forms.
+because the application uses employee session storage, Firestore subscriptions,
+timers, install prompts, and interactive forms. Owner and Manager passwords are
+validated by API routes and staff sessions use signed HTTP-only cookies.
 
 ## Data compatibility
 
@@ -99,7 +109,6 @@ The existing Firestore collections and document structures are preserved:
 - `advances`
 - `branches`
 - `amigos_store/appSettings`
-- `amigos_store/ownerPass`
 
 The app starts with empty Firestore collections and contains no old-project
 migration, age-based retention, or automatic record deletion paths. Firebase
@@ -116,8 +125,11 @@ registration so stale caches do not interfere with local work.
 
 - The application currently applies India Standard Time (UTC+05:30) to automatic
   clock-out behavior.
-- Owner and employee sessions remain client-side and automatically expire after
-  five minutes of inactivity.
+- Owner has payroll, salary advance, salary-field, export, and settings access.
+- Manager can manage attendance, leave, and staff profiles but salary-sensitive
+  navigation and values are excluded.
+- Signed Owner and Manager sessions expire after five minutes. Employee PIN
+  sessions remain client-side and use the same inactivity timeout.
 - PIN/password behavior is preserved for compatibility. Review the Firestore
   security rules and migrate clear-text credentials before exposing the system
   beyond its current trusted deployment model.

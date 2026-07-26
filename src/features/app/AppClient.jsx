@@ -15,7 +15,7 @@ import { db } from "@/lib/firebase/client";
 const storage = {
   async get(key) {
     try {
-      if (key === "appSettings" || key === "ownerPass") {
+      if (key === "appSettings") {
         const docRef = doc(db, "amigos_store", key);
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
@@ -34,7 +34,7 @@ const storage = {
   },
   async set(key, val) {
     try {
-      if (key === "appSettings" || key === "ownerPass") {
+      if (key === "appSettings") {
         await setDoc(doc(db, "amigos_store", key), { value: val }, { merge: true });
       } else {
         console.warn(`storage.set called on collection ${key}. Use add/update/remove instead.`);
@@ -56,7 +56,7 @@ const storage = {
     catch (e) { console.error(`Firebase REMOVE error:`, e); }
   },
   subscribe(key, callback) {
-    if (key === "appSettings" || key === "ownerPass") {
+    if (key === "appSettings") {
       return onSnapshot(doc(db, "amigos_store", key), (docSnap) => {
         const data = docSnap.exists() ? docSnap.data().value : null;
         callback(data);
@@ -71,9 +71,6 @@ const storage = {
 
 // ── Seed data ──
 const SEED_EMPLOYEES = [];
-const SUPER_PASSWORD = "superadmin123";
-
-const getOwnerPass = async () => (await storage.get("ownerPass")) || "admin123";
 
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 const DEFAULT_AUTO_CLOCK_OUT_HOUR_IST = 23;
@@ -182,15 +179,6 @@ const downloadCSV = (filename, rows) => {
   link.download = filename;
   link.click();
 };
-const ownerPasswordIssues = (password) => {
-  const pwd = password.trim();
-  const issues = [];
-  if (pwd.length < 8) issues.push("at least 8 characters");
-  if (!/[A-Za-z]/.test(pwd)) issues.push("at least 1 letter");
-  if (!/[^A-Za-z0-9\s]/.test(pwd)) issues.push("at least 1 special character");
-  return issues;
-};
-
 const isWindows = typeof window !== "undefined" && /windows/i.test(window.navigator.userAgent);
 
 // ── Lazy Loaded Components ──
@@ -520,6 +508,7 @@ function LoginScreen({ onLogin }) {
   const [isIOS] = useState(detectIOS);
   const [isStandalone] = useState(detectStandalone);
   const [showPass, setShowPass] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     const handleInstallPrompt = (e) => {
@@ -565,6 +554,30 @@ function LoginScreen({ onLogin }) {
     if (outcome === 'accepted') setInstallPrompt(null);
   };
 
+  const handleStaffLogin = async () => {
+    if (mode !== "owner" && mode !== "manager") return;
+    setSubmitting(true);
+    setError("");
+    try {
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role: mode, password: pass }),
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        setError(result.error || "Unable to sign in.");
+        setPass("");
+        return;
+      }
+      onLogin(result.role, null);
+    } catch {
+      setError("Unable to reach the login service.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   if (loading) return (
     <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:"var(--bg)"}}>
       <GlobalStyle />
@@ -606,7 +619,11 @@ function LoginScreen({ onLogin }) {
           </button>
           <button className="btn btn-outline" style={{padding:"17px",fontSize:15,borderRadius:13,width:"100%"}}
             onClick={() => { setMode("owner"); setError(""); }}>
-            <Briefcase size={18} /> Owner / Manager
+            <Briefcase size={18} /> Owner Login
+          </button>
+          <button className="btn btn-outline" style={{padding:"17px",fontSize:15,borderRadius:13,width:"100%"}}
+            onClick={() => { setMode("manager"); setError(""); }}>
+            <Users size={18} /> Manager Login
           </button>
         </div>
       ) : mode === "employee" ? (
@@ -624,7 +641,9 @@ function LoginScreen({ onLogin }) {
         </div>
       ) : (
         <div className="fade-up" style={{width:"100%",maxWidth:300}}>
-          <p style={{color:"var(--text-2)",marginBottom:18,textAlign:"center",fontSize:14}}>Owner Password</p>
+          <p style={{color:"var(--text-2)",marginBottom:18,textAlign:"center",fontSize:14}}>
+            {mode === "owner" ? "Owner Password" : "Manager Password"}
+          </p>
           <label className="field-label">Password</label>
           <div style={{position: "relative", marginBottom: 12}}>
             <input
@@ -632,12 +651,8 @@ function LoginScreen({ onLogin }) {
               onChange={e => setPass(e.target.value)}
               className="input"
               style={{marginBottom:0, paddingRight:40}}
-              onKeyDown={async (e) => {
-                if (e.key === "Enter") {
-                  const real = await getOwnerPass();
-                  if (pass === real || pass === SUPER_PASSWORD) { setError(""); onLogin("owner", null); }
-                  else { setError("Incorrect password."); setPass(""); }
-                }
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !submitting) void handleStaffLogin();
               }}
             />
             <button
@@ -654,12 +669,9 @@ function LoginScreen({ onLogin }) {
           </div>
           {error && <p style={{color:"var(--danger)",fontSize:13,marginBottom:12,padding:"8px 12px",background:"var(--danger-bg)",borderRadius:8}}>{error}</p>}
           <button className="btn btn-gold" style={{width:"100%",padding:14,marginBottom:8}}
-            onClick={async () => {
-              const real = await getOwnerPass();
-              if (pass === real || pass === SUPER_PASSWORD) { setError(""); onLogin("owner", null); }
-              else { setError("Incorrect password."); setPass(""); }
-            }}>
-            Login as Owner/Manager
+            disabled={submitting || !pass}
+            onClick={() => void handleStaffLogin()}>
+            {submitting ? "Signing in…" : `Login as ${mode === "owner" ? "Owner" : "Manager"}`}
           </button>
           <button className="btn btn-ghost btn-sm" style={{width:"100%"}} onClick={() => { setMode(null); setPass(""); setError(""); }}><ChevronLeft size={14}/> Back</button>
         </div>
@@ -1211,7 +1223,8 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
 }
 
 // ── Owner Dashboard ──
-function OwnerDashboard({ onLogout }) {
+function OwnerDashboard({ role, onLogout }) {
+  const isOwner = role === "owner";
   const [tab, setTab] = useState("overview");
   const [selectedBranch, setSelectedBranch] = useState("All");
   const [employees, setEmployees] = useState([]);
@@ -1221,7 +1234,6 @@ function OwnerDashboard({ onLogout }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [now, setNow] = useState(new Date());
-  const [newPass, setNewPass] = useState("");
   const [newBranch, setNewBranch] = useState("");
   const [editingBranch, setEditingBranch] = useState(null);
   const [editBranchValue, setEditBranchValue] = useState("");
@@ -1233,10 +1245,7 @@ function OwnerDashboard({ onLogout }) {
   const [prOffset, setPrOffset] = useState(0);
   const [payrollSearch, setPayrollSearch] = useState("");
   const [overviewMode, setOverviewMode] = useState("weekly");
-  const [showNewPass, setShowNewPass] = useState(false);
   const [liveEmpTypeFilter, setLiveEmpTypeFilter] = useState("All");
-  const newPassIssues = ownerPasswordIssues(newPass);
-  const canUpdateOwnerPass = newPass.trim().length > 0 && newPassIssues.length === 0;
 
   useEffect(() => {
     const iv = setInterval(() => setNow(new Date()), 1000);
@@ -1289,15 +1298,21 @@ function OwnerDashboard({ onLogout }) {
       storage.subscribe("leaves", (data) => {
         setLeaves(data || []);
         checkLoaded();
-      }),
-      storage.subscribe("advances", (data) => {
-        setAdvances(data || []);
-        checkLoaded();
       })
     ];
 
+    if (isOwner) {
+      unsubs.push(storage.subscribe("advances", (data) => {
+        setAdvances(data || []);
+        checkLoaded();
+      }));
+    } else {
+      setAdvances([]);
+      checkLoaded();
+    }
+
     return () => unsubs.forEach(unsub => unsub());
-  }, []);
+  }, [isOwner]);
 
   const currentWeekStart = useMemo(() => {
     const d = new Date(); d.setDate(d.getDate() - d.getDay()); d.setHours(0,0,0,0); return d;
@@ -1655,10 +1670,10 @@ function OwnerDashboard({ onLogout }) {
     {id:"overview",  label:"Overview",   icon:<LayoutDashboard size={14} />},
     {id:"live",      label:"Live Clock",  icon:<Timer size={14} />},
     {id:"timesheet", label:"Timesheets",  icon:<ClipboardList size={14} />},
-    {id:"payroll",   label:"Payroll",     icon:<IndianRupee size={14} />},
-    {id:"requests",  label:"Requests",    icon:<Inbox size={14} />, badge: pendingLeaves.length + pendingAdvances.length},
+    ...(isOwner ? [{id:"payroll", label:"Payroll", icon:<IndianRupee size={14} />}] : []),
+    {id:"requests",  label:"Requests",    icon:<Inbox size={14} />, badge: pendingLeaves.length + (isOwner ? pendingAdvances.length : 0)},
     {id:"employees", label:"Staff",       icon:<Users size={14} />},
-    {id:"settings",  label:"Settings",    icon:<Settings size={14} />},
+    ...(isOwner ? [{id:"settings", label:"Settings", icon:<Settings size={14} />}] : []),
   ];
 
   if (loading && error) {
@@ -1706,7 +1721,9 @@ function OwnerDashboard({ onLogout }) {
           </div>
           <div>
             <h2 style={{fontSize:16,color:"var(--gold)",lineHeight:1.1,letterSpacing:"0.04em",whiteSpace:"nowrap"}}>AMIGOS Connect</h2>
-            <p style={{fontSize:11,color:"var(--muted)",letterSpacing:"0.1em",whiteSpace:"nowrap"}}>OWNER DASHBOARD</p>
+            <p style={{fontSize:11,color:"var(--muted)",letterSpacing:"0.1em",whiteSpace:"nowrap"}}>
+              {isOwner ? "OWNER DASHBOARD" : "MANAGER DASHBOARD"}
+            </p>
           </div>
         </div>
         <div className="owner-actions" style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
@@ -1725,7 +1742,7 @@ function OwnerDashboard({ onLogout }) {
               <span style={{fontSize:12,color:"var(--amber)",fontWeight:500}}><Flag size={12} style={{verticalAlign:"middle", marginTop:"-2px"}}/> {pendingLeaves.length} leave pending</span>
             </div>
           )}
-          {pendingAdvances.length > 0 && (
+          {isOwner && pendingAdvances.length > 0 && (
             <div style={{background:"var(--amber-bg)",border:"1px solid rgba(245,158,11,.2)",borderRadius:20,padding:"4px 10px",whiteSpace:"nowrap"}}>
               <span style={{fontSize:12,color:"var(--amber)",fontWeight:500}}><IndianRupee size={12} style={{verticalAlign:"middle", marginTop:"-2px"}}/> {pendingAdvances.length} advance pending</span>
             </div>
@@ -1790,7 +1807,7 @@ function OwnerDashboard({ onLogout }) {
                 {label:"Total Staff", value:fEmployees.length, icon:<Users size={14} />, color:"var(--accent)"},
                 {label:"Active Now",  value:activeSessions.length, icon:<Timer size={14} />, color:"var(--success)"},
                 {label:"Pending Leaves", value:pendingLeaves.length, icon:<Calendar size={14} />, color:"var(--amber)"},
-                {label:"Advances Req.", value:pendingAdvances.length, icon:<IndianRupee size={14} />, color:"var(--amber)"},
+                ...(isOwner ? [{label:"Advances Req.", value:pendingAdvances.length, icon:<IndianRupee size={14} />, color:"var(--amber)"}] : []),
               ].map(s => (
                 <div key={s.label} className="card" style={{flex:"1 1 145px",position:"relative",overflow:"hidden"}}>
                   <div style={{color:s.color, marginBottom:8}}>{s.icon}</div>
@@ -1870,7 +1887,10 @@ function OwnerDashboard({ onLogout }) {
                       </div>
                       <div style={{textAlign: "left"}}>
                         <p style={{fontWeight:600,fontSize:14}}>{emp.name}</p>
-                        <p style={{fontSize:12,color:"var(--muted)"}}>{emp.role} {emp.branch ? `· ${emp.branch}` : ""} · {emp.employmentType || "Full-time"} · ₹{emp.dailySalary||0}/day (₹{emp.hourlyRate||0}/hr)</p>
+                        <p style={{fontSize:12,color:"var(--muted)"}}>
+                          {emp.role} {emp.branch ? `· ${emp.branch}` : ""} · {emp.employmentType || "Full-time"}
+                          {isOwner ? ` · ₹${emp.dailySalary || 0}/day (₹${emp.hourlyRate || 0}/hr)` : ""}
+                        </p>
                       </div>
                     </div>
                     <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
@@ -1950,7 +1970,7 @@ function OwnerDashboard({ onLogout }) {
                     </div>
                     <div className="mobile-left" style={{textAlign:"right",flex:"1 1 150px"}}>
                       <div style={{fontSize:26,fontFamily:"'Playfair Display',serif",color:"var(--success)",fontWeight:600,letterSpacing:"0.05em"}}>{eStr}</div>
-                      <div style={{fontSize:12,color:"var(--muted)", marginBottom: 8}}>₹{((hrs) * (emp?.hourlyRate || 0)).toFixed(2)} earned</div>
+                      {isOwner && <div style={{fontSize:12,color:"var(--muted)", marginBottom: 8}}>₹{((hrs) * (emp?.hourlyRate || 0)).toFixed(2)} earned</div>}
                       <button className="btn btn-outline btn-xs" onClick={() => clockOutSingle(sess.id, sess.name)}>
                         <StopCircle size={12} style={{marginRight: 2}}/> Clock Out
                       </button>
@@ -1979,7 +1999,7 @@ function OwnerDashboard({ onLogout }) {
                     </div>
                     <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
                       <span className="tag tag-green">{h.toFixed(1)} hrs</span>
-                      <span style={{fontSize:13,color:"var(--gold)",fontWeight:600}}>₹{(h * (emp?.hourlyRate||0)).toFixed(2)}</span>
+                      {isOwner && <span style={{fontSize:13,color:"var(--gold)",fontWeight:600}}>₹{(h * (emp?.hourlyRate||0)).toFixed(2)}</span>}
                     </div>
                   </div>
                 );
@@ -2032,7 +2052,6 @@ function OwnerDashboard({ onLogout }) {
             {timesheetEmployees.map(emp => {
               const wl = getTsLogs(emp.id);
               const wh = totalHours(wl.filter(l=>l.clockOut));
-              const pay = wh * (emp.hourlyRate||0);
               return (
                 <div key={emp.id} className="card" style={{marginBottom:14, textAlign: "left"}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12,flexWrap:"wrap",gap:12}}>
@@ -2041,7 +2060,9 @@ function OwnerDashboard({ onLogout }) {
                       <div style={{fontSize:12,color:"var(--muted)",marginTop:2}}>{emp.role} {emp.branch ? `· ${emp.branch}` : ""}</div>
                     </div>
                     <div className="mobile-center-tag" style={{marginLeft:"auto"}}>
-                      <span className="tag tag-gold" style={{whiteSpace:"nowrap"}}>{wh.toFixed(1)} hrs · ₹{pay.toFixed(2)}</span>
+                      <span className="tag tag-gold" style={{whiteSpace:"nowrap"}}>
+                        {wh.toFixed(1)} hrs{isOwner ? ` · ₹${(wh * (emp.hourlyRate || 0)).toFixed(2)}` : ""}
+                      </span>
                     </div>
                   </div>
                   {wl.length === 0
@@ -2071,7 +2092,7 @@ function OwnerDashboard({ onLogout }) {
         )}
 
         {/* ── PAYROLL ── */}
-        {tab === "payroll" && (
+        {isOwner && tab === "payroll" && (
           <div className="fade-up">
             <div style={{display:"flex", flexDirection:"column", gap:12, marginBottom:16}}>
               <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:10}}>
@@ -2238,6 +2259,7 @@ function OwnerDashboard({ onLogout }) {
               <div className="card" style={{textAlign:"center",padding:"32px",color:"var(--muted)",fontSize:13,marginBottom:28}}>No leave requests yet.</div>
             )}
 
+            {isOwner && <>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10,marginBottom:20,borderTop:"1px solid var(--border)",paddingTop:28}}>
               <h3 style={{fontSize:20,marginBottom:0,textAlign:"left"}}>Salary Advances</h3>
               <button className="btn btn-gold btn-sm mobile-export-btn" onClick={exportAdvancesCSV}><Download size={14}/> Export CSV</button>
@@ -2304,14 +2326,15 @@ function OwnerDashboard({ onLogout }) {
             {pendingAdvances.length === 0 && paidAdvances.length === 0 && rejectedAdvances.length === 0 && (
               <div className="card" style={{textAlign:"center",padding:"32px",color:"var(--muted)",fontSize:13}}>No advance requests yet.</div>
             )}
+            </>}
           </div>
         )}
 
         {/* ── STAFF / EMPLOYEES ── */}
-        {tab === "employees" && <EmployeeManager employees={employees} setEmployees={setEmployees} selectedBranch={selectedBranch} branches={settings.branches} />}
+        {tab === "employees" && <EmployeeManager employees={employees} setEmployees={setEmployees} selectedBranch={selectedBranch} branches={settings.branches} canViewSalary={isOwner} />}
 
         {/* ── SETTINGS ── */}
-        {tab === "settings" && (
+        {isOwner && tab === "settings" && (
           <div className="fade-up" style={{ maxWidth: 400, margin: "0 auto" }}>
             <h3 style={{fontSize:20,marginBottom:20,textAlign:"center"}}>App Settings</h3>
             
@@ -2449,58 +2472,6 @@ function OwnerDashboard({ onLogout }) {
               </button>
             </div>
 
-            <div className="card">
-              <h4 style={{fontSize:16, marginBottom:6}}>Change Owner Password</h4>
-              <p style={{color:"var(--muted)", fontSize:13, marginBottom:16}}>Update the master password used to access the Owner Dashboard.</p>
-              
-              <label className="field-label">New Password</label>
-              <div style={{position: "relative", marginBottom: 16}}>
-                <input 
-                  type={showNewPass ? "text" : "password"} 
-                  placeholder="Enter new password" 
-                  value={newPass} 
-                  onChange={e => setNewPass(e.target.value)} 
-                  className="input" 
-                  style={{marginBottom: 0, paddingRight: 40}} 
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowNewPass(!showNewPass)}
-                  style={{
-                    position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)",
-                    background: "transparent", border: "none", color: "var(--muted)", cursor: "pointer", fontSize: 16, padding: 0
-                  }}
-                >
-                  {showNewPass ? <EyeOff size={16}/> : <Eye size={16}/>}
-                </button>
-              </div>
-              <p style={{
-                color: newPass && newPassIssues.length ? "var(--danger)" : "var(--muted)",
-                fontSize: 12,
-                marginBottom: 16,
-                lineHeight: 1.5
-              }}>
-                Password must have at least 8 characters, 1 letter, and 1 special character.
-              </p>
-              <button 
-                className="btn btn-gold" 
-                style={{width: "100%"}}
-                disabled={!canUpdateOwnerPass}
-                onClick={async () => {
-                  const issues = ownerPasswordIssues(newPass);
-                  if (issues.length) {
-                    alert(`Password must contain ${issues.join(", ")}.`);
-                    return;
-                  }
-                  await storage.set("ownerPass", newPass.trim());
-                  alert("Password updated successfully!");
-                  setNewPass("");
-                }}
-              >
-                Update Password
-              </button>
-            </div>
-
             {/* Developer Info Footer */}
             <div style={{ textAlign: "center", marginTop: 40, marginBottom: 20, color: "var(--muted)", fontSize: 12, lineHeight: 1.6 }}>
               <p style={{ fontWeight: 600, color: "var(--text-2)", letterSpacing: "0.05em", textTransform: "uppercase" }}>Amigos Connect v1.0.1</p>
@@ -2515,7 +2486,7 @@ function OwnerDashboard({ onLogout }) {
 }
 
 // ── Employee Manager ──────────────────────────────────────────────────────────
-function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [] }) {
+function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [], canViewSalary = false }) {
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
@@ -2532,7 +2503,15 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
     if (currentEmployees.find(e=>e.pin===form.pin && e.id !== editingId)) { setErr("PIN already taken."); return; }
     
     let updated;
-    const baseEmp = { ...form, hourlyRate: parseFloat(form.hourlyRate)||0, dailySalary: parseFloat(form.dailySalary)||0, standardHours: parseFloat(form.standardHours)||10 };
+    const baseEmp = { ...form, standardHours: parseFloat(form.standardHours)||10 };
+    if (canViewSalary) {
+      baseEmp.hourlyRate = parseFloat(form.hourlyRate) || 0;
+      baseEmp.dailySalary = parseFloat(form.dailySalary) || 0;
+    } else {
+      delete baseEmp.hourlyRate;
+      delete baseEmp.dailySalary;
+      delete baseEmp.paymentCycle;
+    }
     if (editingId) {
       await storage.update("employees", editingId, baseEmp);
       updated = currentEmployees.map(e => e.id === editingId ? { ...e, ...baseEmp } : e);
@@ -2566,10 +2545,10 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
   const edit = (emp) => {
     setConfirmRemoveId(null);
     setForm({
-      name: emp.name, pin: emp.pin, employmentType: emp.employmentType || "Full-time", hourlyRate: emp.hourlyRate || "", 
-      dailySalary: emp.dailySalary || "", standardHours: emp.standardHours || "10", role: emp.role, 
+      name: emp.name, pin: emp.pin, employmentType: emp.employmentType || "Full-time", hourlyRate: canViewSalary ? (emp.hourlyRate || "") : "",
+      dailySalary: canViewSalary ? (emp.dailySalary || "") : "", standardHours: emp.standardHours || "10", role: emp.role,
       branch: emp.branch || branches[0] || "",
-      paymentCycle: emp.paymentCycle || "Weekly",
+      paymentCycle: canViewSalary ? (emp.paymentCycle || "Weekly") : "Weekly",
       phone: emp.phone || "", email: emp.email || "",
       gender: emp.gender || "", address: emp.address || ""
     });
@@ -2607,7 +2586,7 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
             {label:"Per Day Salary (₹)", key:"dailySalary", type:"number", ph:"e.g. 500"},
             {label:"Hourly Rate (₹)", key:"hourlyRate",type:"number", ph:"e.g. 11.50"},
             {label:"Role",          key:"role",       type:"text",   ph:"e.g. Sales Executive"},
-          ].map(f => (
+          ].filter(f => canViewSalary || !["dailySalary", "hourlyRate"].includes(f.key)).map(f => (
             <div key={f.key} style={{marginBottom:12}}>
               <label className="field-label">{f.label}</label>
               {f.type === "select" ? (
@@ -2634,13 +2613,13 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
                 {branches.map(b => <option key={b} value={b}>{b}</option>)}
               </select>
             </div>
-            <div>
+            {canViewSalary && <div>
               <label className="field-label">Payment Cycle</label>
               <select className="input" value={form.paymentCycle} onChange={e => setForm(p=>({...p,paymentCycle:e.target.value}))}>
                 <option value="Weekly">Weekly</option>
                 <option value="Monthly">Monthly</option>
               </select>
-            </div>
+            </div>}
           </div>
           <div style={{borderTop:"1px solid var(--border)", margin:"16px 0", paddingTop:16}}>
             <h4 style={{fontSize:14,color:"var(--text-2)",marginBottom:12}}>Profile Details (Optional)</h4>
@@ -2686,7 +2665,10 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
               }}><User size={20} /></div>
               <div style={{minWidth:0}}>
                 <div style={{fontWeight:600}}>{emp.name}</div>
-                <div style={{fontSize:12,color:"var(--muted)"}}>{emp.role} {emp.branch ? `· ${emp.branch}` : ""} · {emp.employmentType || "Full-time"} · {emp.paymentCycle || "Weekly"} · PIN: {emp.pin} · ₹{emp.dailySalary||0}/day (₹{emp.hourlyRate||0}/hr)</div>
+                <div style={{fontSize:12,color:"var(--muted)"}}>
+                  {emp.role} {emp.branch ? `· ${emp.branch}` : ""} · {emp.employmentType || "Full-time"} · PIN: {emp.pin}
+                  {canViewSalary ? ` · ${emp.paymentCycle || "Weekly"} · ₹${emp.dailySalary || 0}/day (₹${emp.hourlyRate || 0}/hr)` : ""}
+                </div>
                 {(emp.phone || emp.email || emp.gender || emp.address) && (
                   <div style={{fontSize:11,color:"var(--text-2)",marginTop:4,display:"flex",gap:10,flexWrap:"wrap"}}>
                     {emp.phone && <span><Phone size={12}/> {emp.phone}</span>}
@@ -2721,25 +2703,42 @@ export function AppClient() {
   const [sessionReady, setSessionReady] = useState(false);
 
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem("amigos_session");
-      setSession(saved ? JSON.parse(saved) : null);
-    } catch {
-      setSession(null);
-    } finally {
-      setSessionReady(true);
-    }
+    void (async () => {
+      try {
+        const response = await fetch("/api/auth/session", { cache: "no-store" });
+        if (response.ok) {
+          const staffSession = await response.json();
+          setSession({ role: staffSession.role, employee: null });
+          return;
+        }
+        const saved = localStorage.getItem("amigos_employee_session");
+        const employeeSession = saved ? JSON.parse(saved) : null;
+        setSession(
+          employeeSession?.role === "employee" && employeeSession?.employee
+            ? employeeSession
+            : null,
+        );
+        localStorage.removeItem("amigos_session");
+      } catch {
+        setSession(null);
+      } finally {
+        setSessionReady(true);
+      }
+    })();
   }, []);
 
   const handleLogin = (role, emp) => {
     const s = { role, employee: emp };
     setSession(s);
-    localStorage.setItem("amigos_session", JSON.stringify(s));
+    if (role === "employee") {
+      localStorage.setItem("amigos_employee_session", JSON.stringify(s));
+    }
   };
 
   const handleLogout = useCallback(() => {
-    setSession(null); // Clear the user session
-    localStorage.removeItem("amigos_session"); // Remove session from local storage
+    setSession(null);
+    localStorage.removeItem("amigos_employee_session");
+    void fetch("/api/auth/logout", { method: "POST" });
   }, []);
 
   useEffect(() => {
@@ -2764,7 +2763,7 @@ export function AppClient() {
   const handleUpdateEmployee = (updatedEmp) => {
     const s = { ...session, employee: updatedEmp };
     setSession(s);
-    localStorage.setItem("amigos_session", JSON.stringify(s));
+    localStorage.setItem("amigos_employee_session", JSON.stringify(s));
   };
 
   if (!sessionReady) {
@@ -2780,5 +2779,5 @@ export function AppClient() {
     ? <LoginScreen onLogin={handleLogin} />
     : session.role === "employee"
       ? <EmployeeView employee={session.employee} onLogout={handleLogout} onUpdateEmployee={handleUpdateEmployee} />
-      : <OwnerDashboard onLogout={handleLogout} />;
+      : <OwnerDashboard role={session.role} onLogout={handleLogout} />;
 }
