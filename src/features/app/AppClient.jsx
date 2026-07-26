@@ -7,7 +7,7 @@ import {
   Users, Settings, LayoutDashboard, Timer, Phone, Mail, MapPin, 
   Edit2, Trash2, Flag, Eye, EyeOff, ChevronLeft, ChevronRight
 } from "lucide-react";
-import { doc, getDoc, setDoc, collection, getDocs, deleteDoc, onSnapshot } from "firebase/firestore";
+import { doc, getDoc, setDoc, collection, getDocs, deleteDoc, onSnapshot, query, where, writeBatch } from "firebase/firestore";
 
 import { db, isFirebaseConfigured } from "@/lib/firebase/client";
 
@@ -75,6 +75,35 @@ const storage = {
       return true;
     } catch (e) {
       console.error(`Firebase REMOVE error:`, e);
+      return false;
+    }
+  },
+  async removeEmployeeCascade(employeeId) {
+    if (!db) return false;
+    try {
+      const relatedCollections = ["timelogs", "leaves", "advances"];
+      const relatedSnapshots = await Promise.all(
+        relatedCollections.map(key =>
+          getDocs(query(collection(db, key), where("employeeId", "==", employeeId)))
+        )
+      );
+      const documentRefs = relatedSnapshots.flatMap(snapshot =>
+        snapshot.docs.map(documentSnapshot => documentSnapshot.ref)
+      );
+
+      // Delete the employee document last. If a related-record batch fails,
+      // the employee remains visible so the Owner can safely retry.
+      documentRefs.push(doc(db, "employees", employeeId));
+      for (let index = 0; index < documentRefs.length; index += 500) {
+        const batch = writeBatch(db);
+        documentRefs.slice(index, index + 500).forEach(documentRef => {
+          batch.delete(documentRef);
+        });
+        await batch.commit();
+      }
+      return true;
+    } catch (e) {
+      console.error("Firebase employee cleanup error:", e);
       return false;
     }
   },
@@ -1299,6 +1328,11 @@ function OwnerDashboard({ role, onLogout }) {
   const [passwordSaving, setPasswordSaving] = useState(false);
   const [passwordMessage, setPasswordMessage] = useState("");
   const [passwordError, setPasswordError] = useState("");
+  const [visiblePasswordFields, setVisiblePasswordFields] = useState({
+    currentPassword: false,
+    newPassword: false,
+    confirmPassword: false,
+  });
 
   useEffect(() => {
     const iv = setInterval(() => setNow(new Date()), 1000);
@@ -1585,6 +1619,11 @@ function OwnerDashboard({ role, onLogout }) {
         currentPassword: "",
         newPassword: "",
         confirmPassword: "",
+      });
+      setVisiblePasswordFields({
+        currentPassword: false,
+        newPassword: false,
+        confirmPassword: false,
       });
       setPasswordMessage(`${isOwner ? "Owner" : "Manager"} password updated in Firestore.`);
     } catch {
@@ -2454,7 +2493,7 @@ function OwnerDashboard({ role, onLogout }) {
         )}
 
         {/* ── STAFF / EMPLOYEES ── */}
-        {tab === "employees" && <EmployeeManager employees={employees} setEmployees={setEmployees} selectedBranch={selectedBranch} branches={settings.branches} canViewSalary={isOwner} />}
+        {tab === "employees" && <EmployeeManager employees={employees} setEmployees={setEmployees} selectedBranch={selectedBranch} branches={settings.branches} canViewSalary={isOwner} canDeleteStaff={isOwner} />}
 
         {tab === "account" && (
           <div className="fade-up" style={{maxWidth:420,margin:"0 auto"}}>
@@ -2466,38 +2505,42 @@ function OwnerDashboard({ role, onLogout }) {
               <p style={{color:"var(--muted)",fontSize:13,marginBottom:16}}>
                 Your new password is securely hashed and saved to Firestore.
               </p>
-              <label className="field-label" htmlFor="current-staff-password">Current password</label>
-              <input
-                id="current-staff-password"
-                type="password"
-                className="input"
-                autoComplete="current-password"
-                value={passwordForm.currentPassword}
-                onChange={event => setPasswordForm(current => ({...current,currentPassword:event.target.value}))}
-                required
-              />
-              <label className="field-label" htmlFor="new-staff-password">New password</label>
-              <input
-                id="new-staff-password"
-                type="password"
-                className="input"
-                autoComplete="new-password"
-                minLength={8}
-                value={passwordForm.newPassword}
-                onChange={event => setPasswordForm(current => ({...current,newPassword:event.target.value}))}
-                required
-              />
-              <label className="field-label" htmlFor="confirm-staff-password">Confirm new password</label>
-              <input
-                id="confirm-staff-password"
-                type="password"
-                className="input"
-                autoComplete="new-password"
-                minLength={8}
-                value={passwordForm.confirmPassword}
-                onChange={event => setPasswordForm(current => ({...current,confirmPassword:event.target.value}))}
-                required
-              />
+              {[
+                {key:"currentPassword",id:"current-staff-password",label:"Current password",autoComplete:"current-password"},
+                {key:"newPassword",id:"new-staff-password",label:"New password",autoComplete:"new-password"},
+                {key:"confirmPassword",id:"confirm-staff-password",label:"Confirm new password",autoComplete:"new-password"},
+              ].map(field => {
+                const isVisible = visiblePasswordFields[field.key];
+                return (
+                  <div key={field.key}>
+                    <label className="field-label" htmlFor={field.id}>{field.label}</label>
+                    <div style={{position:"relative",marginBottom:12}}>
+                      <input
+                        id={field.id}
+                        type={isVisible ? "text" : "password"}
+                        className="input"
+                        style={{marginBottom:0,paddingRight:40}}
+                        autoComplete={field.autoComplete}
+                        minLength={field.key === "currentPassword" ? undefined : 8}
+                        value={passwordForm[field.key]}
+                        onChange={event => setPasswordForm(current => ({...current,[field.key]:event.target.value}))}
+                        required
+                      />
+                      <button
+                        type="button"
+                        aria-label={isVisible ? `Hide ${field.label.toLowerCase()}` : `Show ${field.label.toLowerCase()}`}
+                        onClick={() => setVisiblePasswordFields(current => ({...current,[field.key]:!current[field.key]}))}
+                        style={{
+                          position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",
+                          background:"transparent",border:"none",color:"var(--muted)",cursor:"pointer",padding:0,
+                        }}
+                      >
+                        {isVisible ? <EyeOff size={16}/> : <Eye size={16}/>}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
               {passwordError && <p style={{color:"var(--danger)",fontSize:13,marginBottom:12}}>{passwordError}</p>}
               {passwordMessage && <p style={{color:"var(--success)",fontSize:13,marginBottom:12}}>{passwordMessage}</p>}
               <button
@@ -2665,7 +2708,7 @@ function OwnerDashboard({ role, onLogout }) {
 }
 
 // ── Employee Manager ──────────────────────────────────────────────────────────
-function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [], canViewSalary = false }) {
+function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [], canViewSalary = false, canDeleteStaff = false }) {
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
@@ -2673,6 +2716,7 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
   const [err, setErr] = useState("");
   const [confirmRemoveId, setConfirmRemoveId] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
 
   const save = async () => {
     if (saving) return;
@@ -2717,23 +2761,16 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
   };
 
   const remove = async (id) => {
-    const latestEmployees = await storage.get("employees");
-    if (!Array.isArray(latestEmployees)) { alert("Could not load staff data. Please check your connection and try again."); return; }
-    const updated = latestEmployees.filter(e=>e.id!==id);
-    if (!await storage.remove("employees", id)) {
-      alert("Could not remove the employee.");
+    if (!canDeleteStaff || deletingId) return;
+    setDeletingId(id);
+    if (!await storage.removeEmployeeCascade(id)) {
+      alert("Could not completely remove the employee records. The employee was kept so you can retry.");
+      setDeletingId(null);
       return;
     }
-    setEmployees(updated);
+    setEmployees(current => current.filter(employee => employee.id !== id));
     setConfirmRemoveId(null);
-    
-    // Deep cleanup
-    const allLogs = await storage.get("timelogs") || [];
-    await Promise.all(allLogs.filter(l => l.employeeId === id).map(l => storage.remove("timelogs", l.id)));
-    const allLeaves = await storage.get("leaves") || [];
-    await Promise.all(allLeaves.filter(l => l.employeeId === id).map(l => storage.remove("leaves", l.id)));
-    const allAdvances = await storage.get("advances") || [];
-    await Promise.all(allAdvances.filter(a => a.employeeId === id).map(a => storage.remove("advances", a.id)));
+    setDeletingId(null);
   };
 
   const edit = (emp) => {
@@ -2877,14 +2914,16 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
             </div>
             <div className="mobile-full" style={{display:"flex", gap:8,flexWrap:"wrap",justifyContent:"flex-end"}}>
               <button className="btn btn-outline btn-sm" onClick={() => edit(emp)}>Edit</button>
-              {confirmRemoveId === emp.id ? (
+              {canDeleteStaff && (confirmRemoveId === emp.id ? (
                 <>
-                  <button className="btn btn-danger btn-sm" onClick={() => remove(emp.id)}>Confirm Remove</button>
-                  <button className="btn btn-ghost btn-sm" onClick={() => setConfirmRemoveId(null)}>Cancel</button>
+                  <button className="btn btn-danger btn-sm" disabled={deletingId === emp.id} onClick={() => remove(emp.id)}>
+                    {deletingId === emp.id ? "Removing…" : "Delete Staff & Records"}
+                  </button>
+                  <button className="btn btn-ghost btn-sm" disabled={deletingId === emp.id} onClick={() => setConfirmRemoveId(null)}>Cancel</button>
                 </>
               ) : (
                 <button className="btn btn-danger btn-sm" onClick={() => setConfirmRemoveId(emp.id)}>Remove</button>
-              )}
+              ))}
             </div>
           </div>
         ))}
