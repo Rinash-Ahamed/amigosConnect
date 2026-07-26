@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { Analytics } from "@vercel/analytics/next";
 import { Inter, Playfair_Display } from "next/font/google";
 
 import { ServiceWorkerRegistration } from "@/components/pwa/ServiceWorkerRegistration";
@@ -48,6 +49,7 @@ export default function RootLayout({
       <body>
         {children}
         <ServiceWorkerRegistration />
+        <Analytics />
       </body>
     </html>
   );

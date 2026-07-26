@@ -1,6 +1,6 @@
-import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 
+import { verifyStaffPassword } from "@/lib/auth/staff-credentials";
 import {
   createStaffSession,
   isSecureRequest,
@@ -8,16 +8,6 @@ import {
   STAFF_SESSION_TTL_SECONDS,
   type StaffRole,
 } from "@/lib/auth/session";
-
-function passwordsMatch(received: string, expected?: string) {
-  if (!expected) return false;
-  const receivedBuffer = Buffer.from(received);
-  const expectedBuffer = Buffer.from(expected);
-  return (
-    receivedBuffer.length === expectedBuffer.length &&
-    timingSafeEqual(receivedBuffer, expectedBuffer)
-  );
-}
 
 export async function POST(request: Request) {
   let body: { role?: unknown; password?: unknown };
@@ -38,19 +28,25 @@ export async function POST(request: Request) {
   }
 
   const role: StaffRole = body.role;
-  const expected =
-    role === "owner"
-      ? process.env.OWNER_PASSWORD
-      : process.env.MANAGER_PASSWORD;
-
-  if (!process.env.AUTH_SECRET || !expected) {
+  if (!process.env.AUTH_SECRET) {
     return NextResponse.json(
       { error: "Staff login is not configured." },
       { status: 503 },
     );
   }
 
-  if (!passwordsMatch(body.password, expected)) {
+  let passwordMatches = false;
+  try {
+    passwordMatches = await verifyStaffPassword(role, body.password);
+  } catch (error) {
+    console.error("Staff credential lookup failed:", error);
+    return NextResponse.json(
+      { error: "Could not access staff login credentials." },
+      { status: 503 },
+    );
+  }
+
+  if (!passwordMatches) {
     return NextResponse.json(
       { error: "Incorrect password." },
       { status: 401 },

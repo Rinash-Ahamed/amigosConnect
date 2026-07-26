@@ -1289,6 +1289,14 @@ function OwnerDashboard({ role, onLogout }) {
   const [payrollSearch, setPayrollSearch] = useState("");
   const [overviewMode, setOverviewMode] = useState("weekly");
   const [liveEmpTypeFilter, setLiveEmpTypeFilter] = useState("All");
+  const [passwordForm, setPasswordForm] = useState({
+    currentPassword: "",
+    newPassword: "",
+    confirmPassword: "",
+  });
+  const [passwordSaving, setPasswordSaving] = useState(false);
+  const [passwordMessage, setPasswordMessage] = useState("");
+  const [passwordError, setPasswordError] = useState("");
 
   useEffect(() => {
     const iv = setInterval(() => setNow(new Date()), 1000);
@@ -1541,6 +1549,49 @@ function OwnerDashboard({ role, onLogout }) {
     return true;
   };
 
+  const changeStaffPassword = async (event) => {
+    event.preventDefault();
+    if (passwordSaving) return;
+    setPasswordError("");
+    setPasswordMessage("");
+
+    if (passwordForm.newPassword.length < 8) {
+      setPasswordError("The new password must be at least 8 characters.");
+      return;
+    }
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+      setPasswordError("The new passwords do not match.");
+      return;
+    }
+
+    setPasswordSaving(true);
+    try {
+      const response = await fetch("/api/auth/password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          currentPassword: passwordForm.currentPassword,
+          newPassword: passwordForm.newPassword,
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        setPasswordError(result.error || "Could not update the password.");
+        return;
+      }
+      setPasswordForm({
+        currentPassword: "",
+        newPassword: "",
+        confirmPassword: "",
+      });
+      setPasswordMessage(`${isOwner ? "Owner" : "Manager"} password updated in Firestore.`);
+    } catch {
+      setPasswordError("Could not reach the password service. Try again.");
+    } finally {
+      setPasswordSaving(false);
+    }
+  };
+
   const saveEditBranch = async (oldName) => {
     const nb = editBranchValue.trim();
     if (!nb) { setEditingBranch(null); return; }
@@ -1742,6 +1793,7 @@ function OwnerDashboard({ role, onLogout }) {
     ...(isOwner ? [{id:"payroll", label:"Payroll", icon:<IndianRupee size={14} />}] : []),
     {id:"requests",  label:"Requests",    icon:<Inbox size={14} />, badge: pendingLeaves.length + (isOwner ? pendingAdvances.length : 0)},
     {id:"employees", label:"Staff",       icon:<Users size={14} />},
+    {id:"account",   label:"Account",     icon:<User size={14} />},
     ...(isOwner ? [{id:"settings", label:"Settings", icon:<Settings size={14} />}] : []),
   ];
 
@@ -2402,6 +2454,62 @@ function OwnerDashboard({ role, onLogout }) {
         {/* ── STAFF / EMPLOYEES ── */}
         {tab === "employees" && <EmployeeManager employees={employees} setEmployees={setEmployees} selectedBranch={selectedBranch} branches={settings.branches} canViewSalary={isOwner} />}
 
+        {tab === "account" && (
+          <div className="fade-up" style={{maxWidth:420,margin:"0 auto"}}>
+            <h3 style={{fontSize:20,marginBottom:20,textAlign:"center"}}>
+              {isOwner ? "Owner" : "Manager"} Account
+            </h3>
+            <form className="card" onSubmit={changeStaffPassword}>
+              <h4 style={{fontSize:16,marginBottom:6}}>Change Password</h4>
+              <p style={{color:"var(--muted)",fontSize:13,marginBottom:16}}>
+                Your new password is securely hashed and saved to Firestore.
+              </p>
+              <label className="field-label" htmlFor="current-staff-password">Current password</label>
+              <input
+                id="current-staff-password"
+                type="password"
+                className="input"
+                autoComplete="current-password"
+                value={passwordForm.currentPassword}
+                onChange={event => setPasswordForm(current => ({...current,currentPassword:event.target.value}))}
+                required
+              />
+              <label className="field-label" htmlFor="new-staff-password">New password</label>
+              <input
+                id="new-staff-password"
+                type="password"
+                className="input"
+                autoComplete="new-password"
+                minLength={8}
+                value={passwordForm.newPassword}
+                onChange={event => setPasswordForm(current => ({...current,newPassword:event.target.value}))}
+                required
+              />
+              <label className="field-label" htmlFor="confirm-staff-password">Confirm new password</label>
+              <input
+                id="confirm-staff-password"
+                type="password"
+                className="input"
+                autoComplete="new-password"
+                minLength={8}
+                value={passwordForm.confirmPassword}
+                onChange={event => setPasswordForm(current => ({...current,confirmPassword:event.target.value}))}
+                required
+              />
+              {passwordError && <p style={{color:"var(--danger)",fontSize:13,marginBottom:12}}>{passwordError}</p>}
+              {passwordMessage && <p style={{color:"var(--success)",fontSize:13,marginBottom:12}}>{passwordMessage}</p>}
+              <button
+                type="submit"
+                className="btn btn-gold"
+                style={{width:"100%"}}
+                disabled={passwordSaving}
+              >
+                {passwordSaving ? "Updating…" : "Update Password"}
+              </button>
+            </form>
+          </div>
+        )}
+
         {/* ── SETTINGS ── */}
         {isOwner && tab === "settings" && (
           <div className="fade-up" style={{ maxWidth: 400, margin: "0 auto" }}>
@@ -2832,7 +2940,13 @@ export function AppClient() {
   const handleLogout = useCallback(() => {
     setSession(null);
     localStorage.removeItem("amigos_employee_session");
-    void fetch("/api/auth/logout", { method: "POST" });
+    void fetch("/api/auth/logout", {
+      method: "POST",
+      keepalive: true,
+    }).catch(() => {
+      // The local session is already cleared; a transient network failure
+      // should not surface as an unhandled browser error.
+    });
   }, []);
 
   useEffect(() => {
