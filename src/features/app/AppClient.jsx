@@ -1,29 +1,17 @@
+"use client";
+
 import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from "react";
 import { 
   CheckCircle, StopCircle, Play, Coffee, User, Briefcase, Calendar, 
   Download, Clock, Check, X, Inbox, ClipboardList, IndianRupee, 
   Users, Settings, LayoutDashboard, Timer, Phone, Mail, MapPin, 
-  Edit2, Trash2, Flag, Eye, EyeOff, ChevronLeft, ChevronRight, LogOut 
+  Edit2, Trash2, Flag, Eye, EyeOff, ChevronLeft, ChevronRight
 } from "lucide-react";
-import { initializeApp } from "firebase/app";
-import { getFirestore, doc, getDoc, setDoc, collection, getDocs, deleteDoc, onSnapshot } from "firebase/firestore";
+import { doc, getDoc, setDoc, collection, getDocs, deleteDoc, onSnapshot } from "firebase/firestore";
 
-// ── Firebase Configuration ──
-const firebaseConfig = {
-  apiKey: "AIzaSyBBoY91BXif2R9pi5smWyty0R-gleqmy6g",
-  authDomain: "amigosconnect-fdb11.firebaseapp.com",
-  projectId: "amigosconnect-fdb11",
-  storageBucket: "amigosconnect-fdb11.firebasestorage.app",
-  messagingSenderId: "99472736361",
-  appId: "1:99472736361:web:ba0eaebb8adb1f1c2462f8"
-};
-
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
+import { db } from "@/lib/firebase/client";
 
 // ── Storage helpers ──
-let cachedRetentionDays = 120;
-
 const storage = {
   async get(key) {
     try {
@@ -32,33 +20,12 @@ const storage = {
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
           const data = docSnap.data().value;
-          if (key === "appSettings" && data && data.retentionDays) {
-            cachedRetentionDays = data.retentionDays;
-          }
           return data;
         }
         return null;
       } else {
-        // --- ONE-TIME AUTO MIGRATION ---
-        const oldDocRef = doc(db, "amigos_store", key);
-        const oldDocSnap = await getDoc(oldDocRef);
-        if (oldDocSnap.exists()) {
-          const oldData = oldDocSnap.data().value;
-          if (Array.isArray(oldData) && oldData.length > 0) {
-            await Promise.all(oldData.map(item => setDoc(doc(db, key, item.id), item)));
-          }
-          await deleteDoc(oldDocRef); // Delete old document so migration doesn't run again
-        }
-        // -------------------------------
-
         const snapshot = await getDocs(collection(db, key));
-        let data = snapshot.docs.map(d => d.data());
-        // Auto-Cleanup
-        if (key === "timelogs" || key === "leaves" || key === "advances") {
-          const cutoffDate = new Date(Date.now() - cachedRetentionDays * 24 * 60 * 60 * 1000).toISOString();
-          data = data.filter(item => (item.clockIn || item.appliedAt || item.from) > cutoffDate);
-        }
-        return data;
+        return snapshot.docs.map(d => d.data());
       }
     } catch (e) {
       console.error(`Firebase GET error for ${key}:`, e);
@@ -68,9 +35,6 @@ const storage = {
   async set(key, val) {
     try {
       if (key === "appSettings" || key === "ownerPass") {
-        if (key === "appSettings" && val && val.retentionDays) {
-          cachedRetentionDays = val.retentionDays;
-        }
         await setDoc(doc(db, "amigos_store", key), { value: val }, { merge: true });
       } else {
         console.warn(`storage.set called on collection ${key}. Use add/update/remove instead.`);
@@ -95,33 +59,11 @@ const storage = {
     if (key === "appSettings" || key === "ownerPass") {
       return onSnapshot(doc(db, "amigos_store", key), (docSnap) => {
         const data = docSnap.exists() ? docSnap.data().value : null;
-        if (key === "appSettings" && data && data.retentionDays) {
-          cachedRetentionDays = data.retentionDays;
-        }
         callback(data);
       }, (e) => console.error(`Firebase SUBSCRIBE error for ${key}:`, e));
     } else {
-      // --- ONE-TIME AUTO MIGRATION ---
-      const oldDocRef = doc(db, "amigos_store", key);
-      getDoc(oldDocRef).then(async (oldDocSnap) => {
-        if (oldDocSnap.exists()) {
-          const oldData = oldDocSnap.data().value;
-          if (Array.isArray(oldData) && oldData.length > 0) {
-            await Promise.all(oldData.map(item => setDoc(doc(db, key, item.id), item)));
-          }
-          await deleteDoc(oldDocRef);
-        }
-      }).catch(e => console.error(`Migration error for ${key}:`, e));
-      // -------------------------------
-
       return onSnapshot(collection(db, key), (snapshot) => {
-        let data = snapshot.docs.map(d => d.data());
-        // Auto-Cleanup
-        if (key === "timelogs" || key === "leaves" || key === "advances") {
-          const cutoffDate = new Date(Date.now() - cachedRetentionDays * 24 * 60 * 60 * 1000).toISOString();
-          data = data.filter(item => (item.clockIn || item.appliedAt || item.from) > cutoffDate);
-        }
-        callback(data);
+        callback(snapshot.docs.map(d => d.data()));
       }, (e) => console.error(`Firebase SUBSCRIBE error for ${key}:`, e));
     }
   }
@@ -473,7 +415,30 @@ const GlobalStyle = () => (
       animation: dot-blink 1.4s ease-in-out infinite;
     }
 
+    .owner-mobile-nav { display: none; }
+
     @media (max-width: 600px) {
+      .owner-topbar {
+        flex-wrap: wrap;
+        overflow: visible !important;
+        padding: 12px 14px !important;
+      }
+      .owner-actions {
+        width: 100%;
+        flex-wrap: wrap;
+      }
+      .owner-actions .input {
+        flex: 1 1 150px;
+        min-height: 44px;
+      }
+      .owner-actions .btn { min-height: 44px; }
+      .owner-tab-list { display: none !important; }
+      .owner-mobile-nav {
+        display: block;
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--border);
+      }
+      .owner-mobile-nav .input { min-height: 46px; }
       .mobile-center-tag {
         width: 100%;
         display: flex;
@@ -518,7 +483,8 @@ function PinPad({ value, onChange, maxLen = 4 }) {
       </div>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:9 }}>
         {keys.map((k,i) => (
-          <button key={i} className="btn btn-ghost"
+          <button key={i} className="btn btn-ghost" type="button"
+            aria-label={k === "⌫" ? "Delete last digit" : k ? `Enter ${k}` : undefined}
             style={{
               fontSize:20, padding:"15px 0",
               opacity: k==="" ? 0 : 1,
@@ -676,6 +642,7 @@ function LoginScreen({ onLogin }) {
             />
             <button
               type="button"
+              aria-label={showPass ? "Hide password" : "Show password"}
               onClick={() => setShowPass(!showPass)}
               style={{
                 position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)",
@@ -952,7 +919,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
       <GlobalStyle/>
 
       {/* Header */}
-      <div style={{
+      <div className="owner-topbar" style={{
         position:"sticky",top:0,zIndex:100,
         background:"rgba(8,11,16,.88)",backdropFilter:"blur(14px)",WebkitBackdropFilter:"blur(14px)",
         borderBottom:"1px solid var(--border)",
@@ -977,9 +944,9 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
       </div>
 
       {/* Sub nav */}
-      <div style={{display:"flex",gap:4,padding:"14px 20px 0",borderBottom:"1px solid var(--border)",overflowX:"auto",scrollbarWidth:"none",WebkitOverflowScrolling:"touch"}}>
+      <nav aria-label="Employee portal sections" style={{display:"flex",gap:4,padding:"14px 20px 0",borderBottom:"1px solid var(--border)",overflowX:"auto",scrollbarWidth:"none",WebkitOverflowScrolling:"touch"}}>
         {[{id:"home",label:"Dashboard"}, ...(settings.leavesEnabled !== false ? [{id:"leave",label:"Leave Requests"}] : []), {id:"advance",label:"Advance"}, {id:"profile",label:"Profile"}].map(t => (
-          <button key={t.id} onClick={() => setView(t.id)} style={{
+          <button key={t.id} onClick={() => setView(t.id)} aria-current={view === t.id ? "page" : undefined} style={{
             flexShrink: 0, padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",
             fontSize:13,fontWeight:500,fontFamily:"'Inter',sans-serif",
             background: view===t.id ? "var(--gold)" : "transparent",
@@ -987,7 +954,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
             transition:"all .18s"
           }}>{t.label}</button>
         ))}
-      </div>
+      </nav>
 
       <div style={{padding:20,maxWidth: isWindows ? "100%" : 500,margin:"0 auto"}}>
 
@@ -1266,7 +1233,6 @@ function OwnerDashboard({ onLogout }) {
   const [prOffset, setPrOffset] = useState(0);
   const [payrollSearch, setPayrollSearch] = useState("");
   const [overviewMode, setOverviewMode] = useState("weekly");
-  const [retentionDaysInput, setRetentionDaysInput] = useState("120");
   const [showNewPass, setShowNewPass] = useState(false);
   const [liveEmpTypeFilter, setLiveEmpTypeFilter] = useState("All");
   const newPassIssues = ownerPasswordIssues(newPass);
@@ -1278,7 +1244,7 @@ function OwnerDashboard({ onLogout }) {
   }, []);
 
   useEffect(() => {
-    let currentSettings = settings;
+    let currentSettings = defaultSettings();
     let loadedCount = 0;
     const timeout = setTimeout(() => {
       if (loadedCount < 5) {
@@ -1306,7 +1272,6 @@ function OwnerDashboard({ onLogout }) {
         if (!st.branches) st.branches = ["Mens", "Womens", "Crazo", "Warehouse"];
         currentSettings = st;
         setSettings(st);
-        setRetentionDaysInput((st.retentionDays || 120).toString());
         checkLoaded();
       }),
       storage.subscribe("timelogs", async (data) => {
@@ -1485,45 +1450,6 @@ function OwnerDashboard({ onLogout }) {
     const updated = { ...settings, ...newSt };
     setSettings(updated);
     await storage.set("appSettings", updated);
-  };
-
-  const runImmediateCleanup = async () => {
-    const days = parseInt(settings.retentionDays || 120, 10);
-    if (isNaN(days) || days < 1) {
-      alert("Please save a valid retention period before cleanup.");
-      return;
-    }
-    if (!window.confirm(`Clean up records older than ${days} days now?\n\nThis will permanently remove old Timesheets, Leaves, and Advances only.\n\nEmployee/staff details, PINs, branches, salary settings, and app settings will NOT be removed.`)) return;
-
-    const cutoffDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
-    const keepRecent = (items) => (Array.isArray(items) ? items : []).filter(item => (item.clockIn || item.appliedAt || item.from) > cutoffDate);
-    const [allLogs, allLeaves, allAdvances] = await Promise.all([
-      storage.get("timelogs"),
-      storage.get("leaves"),
-      storage.get("advances"),
-    ]);
-    if (allLogs === undefined || allLeaves === undefined || allAdvances === undefined) {
-      alert("Cleanup cancelled because some records could not be loaded. Please check your connection and try again.");
-      return;
-    }
-    const logRecords = Array.isArray(allLogs) ? allLogs : [];
-    const leaveRecords = Array.isArray(allLeaves) ? allLeaves : [];
-    const advanceRecords = Array.isArray(allAdvances) ? allAdvances : [];
-    const cleanedLogs = keepRecent(logRecords);
-    const cleanedLeaves = keepRecent(leaveRecords);
-    const cleanedAdvances = keepRecent(advanceRecords);
-    const deletedLogs = logRecords.filter(item => !cleanedLogs.includes(item));
-    const deletedLeaves = leaveRecords.filter(item => !cleanedLeaves.includes(item));
-    const deletedAdvances = advanceRecords.filter(item => !cleanedAdvances.includes(item));
-    await Promise.all([
-      ...deletedLogs.map(l => storage.remove("timelogs", l.id)),
-      ...deletedLeaves.map(l => storage.remove("leaves", l.id)),
-      ...deletedAdvances.map(a => storage.remove("advances", a.id)),
-    ]);
-    setLogs(cleanedLogs);
-    setLeaves(cleanedLeaves);
-    setAdvances(cleanedAdvances);
-    alert(`Cleanup complete.\n\nRemoved ${logRecords.length - cleanedLogs.length} timesheet records, ${leaveRecords.length - cleanedLeaves.length} leave records, and ${advanceRecords.length - cleanedAdvances.length} advance records.\n\nEmployee/staff details were not removed.`);
   };
 
   const saveEditBranch = async (oldName) => {
@@ -1735,6 +1661,21 @@ function OwnerDashboard({ onLogout }) {
     {id:"settings",  label:"Settings",    icon:<Settings size={14} />},
   ];
 
+  if (loading && error) {
+    return (
+      <main className="route-state">
+        <section className="state-card" role="alert">
+          <p className="eyebrow">Connection problem</p>
+          <h1>Dashboard data could not load</h1>
+          <p>{error}</p>
+          <button className="route-action" onClick={() => window.location.reload()}>
+            Retry
+          </button>
+        </section>
+      </main>
+    );
+  }
+
   if (loading) return (
     <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:"var(--bg)"}}>
       <GlobalStyle/>
@@ -1768,7 +1709,7 @@ function OwnerDashboard({ onLogout }) {
             <p style={{fontSize:11,color:"var(--muted)",letterSpacing:"0.1em",whiteSpace:"nowrap"}}>OWNER DASHBOARD</p>
           </div>
         </div>
-        <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+        <div className="owner-actions" style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
           <select className="input" style={{width:"auto", padding:"4px 10px", marginBottom:0, background:"var(--card-2)", border:"1px solid var(--border)", color:"var(--gold)", fontSize:13}} value={selectedBranch} onChange={e => setSelectedBranch(e.target.value)}>
             <option value="All">All Branches</option>
             {settings.branches?.map(b => <option key={b} value={b}>{b}</option>)}
@@ -1794,13 +1735,13 @@ function OwnerDashboard({ onLogout }) {
       </div>
 
       {/* Nav tabs */}
-      <div style={{
+      <nav className="owner-tab-list" aria-label="Dashboard sections" style={{
         display:"flex",gap:2,padding:"12px 16px 0",
         overflowX:"auto",borderBottom:"1px solid var(--border)",
         scrollbarWidth:"none",WebkitOverflowScrolling:"touch"
       }}>
         {tabs.map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)} style={{
+          <button key={t.id} onClick={() => setTab(t.id)} aria-current={tab === t.id ? "page" : undefined} style={{
             flexShrink: 0, padding:"8px 14px",borderRadius:"8px 8px 0 0",border:"none",cursor:"pointer",
             fontSize:13,fontFamily:"'Inter',sans-serif",fontWeight:500,whiteSpace:"nowrap",
             background: tab===t.id ? "var(--card)" : "transparent",
@@ -1822,6 +1763,21 @@ function OwnerDashboard({ onLogout }) {
             )}
           </button>
         ))}
+      </nav>
+      <div className="owner-mobile-nav">
+        <label className="field-label" htmlFor="owner-section">Dashboard section</label>
+        <select
+          id="owner-section"
+          className="input"
+          value={tab}
+          onChange={(event) => setTab(event.target.value)}
+        >
+          {tabs.map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.label}{item.badge > 0 ? ` (${item.badge})` : ""}
+            </option>
+          ))}
+        </select>
       </div>
 
       <div style={{padding:20,maxWidth: isWindows ? "100%" : 860,margin:"0 auto"}}>
@@ -2005,7 +1961,7 @@ function OwnerDashboard({ onLogout }) {
             </div>
 
             {/* Today's completed sessions */}
-            <p style={{fontSize:12,color:"var(--muted)",textTransform:"uppercase",letterSpacing:".1em",marginBottom:12,fontWeight:500}}>Today's Completed Sessions</p>
+            <p style={{fontSize:12,color:"var(--muted)",textTransform:"uppercase",letterSpacing:".1em",marginBottom:12,fontWeight:500}}>Today&apos;s Completed Sessions</p>
             {(() => {
               if (filteredTodayLogs.length === 0) return (
                 <div className="card" style={{textAlign:"center",padding:"28px",color:"var(--muted)",fontSize:13}}>No completed sessions today</div>
@@ -2479,49 +2435,6 @@ function OwnerDashboard({ onLogout }) {
             </div>
 
             <div className="card" style={{marginBottom: 20}}>
-              <h4 style={{fontSize:16, marginBottom:6}}>Data Retention (Auto-Cleanup)</h4>
-              <p style={{color:"var(--muted)", fontSize:13, marginBottom:16}}>
-                Automatically remove old records to save database space. 
-                <strong style={{color:"var(--text-2)"}}> Only Timesheets, Leaves, and Advances are removed. </strong> 
-                Employee profiles, staff lists, and app settings are never deleted.
-              </p>
-              
-              <label className="field-label">Retention Period (Days)</label>
-              <div style={{display:"flex", gap:8,flexWrap:"wrap"}}>
-                <input 
-                  type="number" 
-                  min="30"
-                  value={retentionDaysInput} 
-                  onChange={e => setRetentionDaysInput(e.target.value)} 
-                  className="input" 
-                  style={{marginBottom: 0,flex:"2 1 160px"}} 
-                />
-                <button 
-                  className="btn btn-gold" 
-                  style={{flex:"1 1 120px"}}
-                  onClick={() => {
-                    const days = parseInt(retentionDaysInput, 10);
-                    if (isNaN(days) || days < 1) { alert("Please enter a valid number of days."); return; }
-                    updateSettings({ retentionDays: days });
-                    alert(`Retention period updated to ${days} days.`);
-                  }}
-                >Save</button>
-              </div>
-              <div style={{borderTop:"1px solid var(--border)",marginTop:16,paddingTop:16}}>
-                <p style={{color:"var(--danger)", fontSize:12, marginBottom:12, lineHeight:1.5}}>
-                  Warning: immediate cleanup permanently deletes old timesheets, leave requests, and salary advances only. Employee/staff details must never be deleted by this action.
-                </p>
-                <button
-                  className="btn btn-danger"
-                  style={{width:"100%"}}
-                  onClick={runImmediateCleanup}
-                >
-                  <Trash2 size={14}/> Clean Up Old Records Now
-                </button>
-              </div>
-            </div>
-
-            <div className="card" style={{marginBottom: 20}}>
               <h4 style={{fontSize:16, marginBottom:6}}>Staff Export</h4>
               <p style={{color:"var(--muted)", fontSize:13, marginBottom:16}}>
                 Download a CSV file with every staff profile, including PIN, branch, payroll, and contact details.
@@ -2803,13 +2716,20 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
 }
 
 // ── Root ──
-export default function App() {
-  const [session, setSession] = useState(() => {
+export function AppClient() {
+  const [session, setSession] = useState(null);
+  const [sessionReady, setSessionReady] = useState(false);
+
+  useEffect(() => {
     try {
       const saved = localStorage.getItem("amigos_session");
-      return saved ? JSON.parse(saved) : null;
-    } catch { return null; }
-  });
+      setSession(saved ? JSON.parse(saved) : null);
+    } catch {
+      setSession(null);
+    } finally {
+      setSessionReady(true);
+    }
+  }, []);
 
   const handleLogin = (role, emp) => {
     const s = { role, employee: emp };
@@ -2846,6 +2766,15 @@ export default function App() {
     setSession(s);
     localStorage.setItem("amigos_session", JSON.stringify(s));
   };
+
+  if (!sessionReady) {
+    return (
+      <main className="route-state" aria-busy="true" aria-live="polite">
+        <span className="spinner" aria-hidden="true" />
+        <span className="sr-only">Restoring your session</span>
+      </main>
+    );
+  }
 
   return !session
     ? <LoginScreen onLogin={handleLogin} />
