@@ -14,13 +14,7 @@ const missingFirebaseVariables = Object.entries(firebaseConfig)
   .filter(([, value]) => !value)
   .map(([key]) => key);
 
-const isFirebaseConfigured = missingFirebaseVariables.length === 0;
-
-if (!isFirebaseConfigured && typeof window !== "undefined") {
-  console.error(
-    `Missing Firebase environment variables: ${missingFirebaseVariables.join(", ")}`,
-  );
-}
+export const isFirebaseConfigured = missingFirebaseVariables.length === 0;
 
 export const firebaseApp = isFirebaseConfigured
   ? getApps().length

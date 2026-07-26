@@ -9,11 +9,12 @@ import {
 } from "lucide-react";
 import { doc, getDoc, setDoc, collection, getDocs, deleteDoc, onSnapshot } from "firebase/firestore";
 
-import { db } from "@/lib/firebase/client";
+import { db, isFirebaseConfigured } from "@/lib/firebase/client";
 
 // ── Storage helpers ──
 const storage = {
   async get(key) {
+    if (!db) return undefined;
     try {
       if (key === "appSettings") {
         const docRef = doc(db, "amigos_store", key);
@@ -33,6 +34,7 @@ const storage = {
     }
   },
   async set(key, val) {
+    if (!db) return;
     try {
       if (key === "appSettings") {
         await setDoc(doc(db, "amigos_store", key), { value: val }, { merge: true });
@@ -44,18 +46,25 @@ const storage = {
     }
   },
   async add(key, item) {
+    if (!db) return;
     try { await setDoc(doc(db, key, item.id), item); } 
     catch (e) { console.error(`Firebase ADD error:`, e); }
   },
   async update(key, id, updates) {
+    if (!db) return;
     try { await setDoc(doc(db, key, id), updates, { merge: true }); } 
     catch (e) { console.error(`Firebase UPDATE error:`, e); }
   },
   async remove(key, id) {
+    if (!db) return;
     try { await deleteDoc(doc(db, key, id)); } 
     catch (e) { console.error(`Firebase REMOVE error:`, e); }
   },
   subscribe(key, callback) {
+    if (!db) {
+      callback(null);
+      return () => {};
+    }
     if (key === "appSettings") {
       return onSnapshot(doc(db, "amigos_store", key), (docSnap) => {
         const data = docSnap.exists() ? docSnap.data().value : null;
@@ -523,6 +532,11 @@ function LoginScreen({ onLogin }) {
 
   useEffect(() => {
     (async () => {
+      if (!isFirebaseConfigured) {
+        setEmployees([]);
+        setLoading(false);
+        return;
+      }
       let emps = await storage.get("employees");
       if (emps === undefined) {
         setError("Could not load staff data. Check your connection and try again.");
@@ -605,7 +619,7 @@ function LoginScreen({ onLogin }) {
           overflow:"hidden", animation: "logo-pulse 3s ease-in-out infinite",
           perspective: 1000
         }}>
-          <img src="/logo.png" alt="Amigos" fetchpriority="high" decoding="async" style={{width:"100%",height:"100%",objectFit:"cover", borderRadius: "50%", animation: "logo-flip 4.5s ease-in-out infinite"}} />
+          <img src="/logo.png" alt="Amigos" fetchPriority="high" decoding="async" style={{width:"100%",height:"100%",objectFit:"cover", borderRadius: "50%", animation: "logo-flip 4.5s ease-in-out infinite"}} />
         </div>
         <h1 style={{fontSize:30, color:"var(--gold)", marginBottom:4, letterSpacing:"0.05em"}}>AMIGOS Connect</h1>
         <p style={{color:"var(--muted)", fontSize:12, letterSpacing:"0.18em", textTransform:"uppercase", fontWeight:500}}>Staff & Manager Portal</p>
@@ -614,9 +628,15 @@ function LoginScreen({ onLogin }) {
       {!mode ? (
         <div className="fade-up" style={{width:"100%",maxWidth:320,display:"flex",flexDirection:"column",gap:12}}>
           <button className="btn btn-gold" style={{padding:"17px",fontSize:15,borderRadius:13,width:"100%"}}
+            disabled={!isFirebaseConfigured}
             onClick={() => { setMode("employee"); setError(""); }}>
             <User size={18} /> Employee Login
           </button>
+          {!isFirebaseConfigured && (
+            <p style={{color:"var(--amber)",fontSize:12,textAlign:"center",lineHeight:1.5}}>
+              Employee login will be available after Firebase is configured.
+            </p>
+          )}
           <button className="btn btn-outline" style={{padding:"17px",fontSize:15,borderRadius:13,width:"100%"}}
             onClick={() => { setMode("owner"); setError(""); }}>
             <Briefcase size={18} /> Owner Login
@@ -2771,6 +2791,24 @@ export function AppClient() {
       <main className="route-state" aria-busy="true" aria-live="polite">
         <span className="spinner" aria-hidden="true" />
         <span className="sr-only">Restoring your session</span>
+      </main>
+    );
+  }
+
+  if (session && !isFirebaseConfigured) {
+    return (
+      <main className="route-state">
+        <section className="state-card" role="alert">
+          <p className="eyebrow">Firebase setup required</p>
+          <h1>Connect the new Firestore project</h1>
+          <p>
+            Add all six NEXT_PUBLIC_FIREBASE_* values to .env, then restart the
+            Next.js server.
+          </p>
+          <button className="route-action" onClick={handleLogout}>
+            Sign out
+          </button>
+        </section>
       </main>
     );
   }
