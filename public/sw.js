@@ -1,4 +1,4 @@
-const CACHE_NAME = 'amigos-connect-v6';
+const CACHE_NAME = 'amigos-connect-v7';
 const URLS_TO_CACHE = [
   '/',
   '/favicon.ico',

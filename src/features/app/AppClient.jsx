@@ -2,20 +2,21 @@
 
 import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from "react";
 import { 
-  CheckCircle, StopCircle, Play, Coffee, User, Briefcase, Calendar, 
+  CheckCircle, StopCircle, User, Briefcase, Calendar, 
   Download, Clock, Check, X, Inbox, ClipboardList, IndianRupee, 
   Users, Settings, LayoutDashboard, Timer, Phone, Mail, MapPin, 
   Edit2, Trash2, Flag, Eye, EyeOff, ChevronLeft, ChevronRight
 } from "lucide-react";
-import { doc, getDoc, setDoc, collection, getDocs, deleteDoc, onSnapshot } from "firebase/firestore";
+import { doc, getDoc, setDoc, collection, getDocs, deleteDoc, onSnapshot, query, where, writeBatch } from "firebase/firestore";
 
-import { db } from "@/lib/firebase/client";
+import { db, isFirebaseConfigured } from "@/lib/firebase/client";
 
 // ── Storage helpers ──
 const storage = {
   async get(key) {
+    if (!db) return undefined;
     try {
-      if (key === "appSettings" || key === "ownerPass") {
+      if (key === "appSettings") {
         const docRef = doc(db, "amigos_store", key);
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
@@ -33,30 +34,85 @@ const storage = {
     }
   },
   async set(key, val) {
+    if (!db) return false;
     try {
-      if (key === "appSettings" || key === "ownerPass") {
+      if (key === "appSettings") {
         await setDoc(doc(db, "amigos_store", key), { value: val }, { merge: true });
+        return true;
       } else {
         console.warn(`storage.set called on collection ${key}. Use add/update/remove instead.`);
+        return false;
       }
     } catch (e) {
       console.error("Firebase SET error:", e);
+      return false;
     }
   },
   async add(key, item) {
-    try { await setDoc(doc(db, key, item.id), item); } 
-    catch (e) { console.error(`Firebase ADD error:`, e); }
+    if (!db) return false;
+    try {
+      await setDoc(doc(db, key, item.id), item);
+      return true;
+    } catch (e) {
+      console.error(`Firebase ADD error:`, e);
+      return false;
+    }
   },
   async update(key, id, updates) {
-    try { await setDoc(doc(db, key, id), updates, { merge: true }); } 
-    catch (e) { console.error(`Firebase UPDATE error:`, e); }
+    if (!db) return false;
+    try {
+      await setDoc(doc(db, key, id), updates, { merge: true });
+      return true;
+    } catch (e) {
+      console.error(`Firebase UPDATE error:`, e);
+      return false;
+    }
   },
   async remove(key, id) {
-    try { await deleteDoc(doc(db, key, id)); } 
-    catch (e) { console.error(`Firebase REMOVE error:`, e); }
+    if (!db) return false;
+    try {
+      await deleteDoc(doc(db, key, id));
+      return true;
+    } catch (e) {
+      console.error(`Firebase REMOVE error:`, e);
+      return false;
+    }
+  },
+  async removeEmployeeCascade(employeeId) {
+    if (!db) return false;
+    try {
+      const relatedCollections = ["timelogs", "leaves", "advances"];
+      const relatedSnapshots = await Promise.all(
+        relatedCollections.map(key =>
+          getDocs(query(collection(db, key), where("employeeId", "==", employeeId)))
+        )
+      );
+      const documentRefs = relatedSnapshots.flatMap(snapshot =>
+        snapshot.docs.map(documentSnapshot => documentSnapshot.ref)
+      );
+
+      // Delete the employee document last. If a related-record batch fails,
+      // the employee remains visible so the Owner can safely retry.
+      documentRefs.push(doc(db, "employees", employeeId));
+      for (let index = 0; index < documentRefs.length; index += 500) {
+        const batch = writeBatch(db);
+        documentRefs.slice(index, index + 500).forEach(documentRef => {
+          batch.delete(documentRef);
+        });
+        await batch.commit();
+      }
+      return true;
+    } catch (e) {
+      console.error("Firebase employee cleanup error:", e);
+      return false;
+    }
   },
   subscribe(key, callback) {
-    if (key === "appSettings" || key === "ownerPass") {
+    if (!db) {
+      callback(null);
+      return () => {};
+    }
+    if (key === "appSettings") {
       return onSnapshot(doc(db, "amigos_store", key), (docSnap) => {
         const data = docSnap.exists() ? docSnap.data().value : null;
         callback(data);
@@ -69,15 +125,12 @@ const storage = {
   }
 };
 
-// ── Seed data ──
-const SEED_EMPLOYEES = [];
-const SUPER_PASSWORD = "superadmin123";
-
-const getOwnerPass = async () => (await storage.get("ownerPass")) || "admin123";
-
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+const SESSION_IDLE_TIMEOUT_MS = 15 * 60 * 1000;
+const SESSION_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const DEFAULT_AUTO_CLOCK_OUT_HOUR_IST = 23;
 const DEFAULT_AUTO_CLOCK_OUT_MINUTE_IST = 0;
+const todayIstDate = () => new Date(Date.now() + IST_OFFSET_MS).toISOString().slice(0, 10);
 const defaultSettings = () => ({
   leavesEnabled: true,
   autoClockOutEnabled: true,
@@ -118,6 +171,14 @@ const hoursWorked = (clockIn, clockOut, breaks = []) => {
 const totalHours = (logs) =>
   logs.reduce((s, l) => s + hoursWorked(l.clockIn, l.clockOut, l.breaks), 0);
 const uid = () => Math.random().toString(36).slice(2, 10);
+const employeePortalProfile = (employee) => {
+  if (!employee) return employee;
+  const profile = { ...employee };
+  delete profile.dailySalary;
+  delete profile.hourlyRate;
+  delete profile.paymentCycle;
+  return profile;
+};
 const getAutoClockOutIso = (
   clockInIso,
   hourIst = DEFAULT_AUTO_CLOCK_OUT_HOUR_IST,
@@ -182,17 +243,6 @@ const downloadCSV = (filename, rows) => {
   link.download = filename;
   link.click();
 };
-const ownerPasswordIssues = (password) => {
-  const pwd = password.trim();
-  const issues = [];
-  if (pwd.length < 8) issues.push("at least 8 characters");
-  if (!/[A-Za-z]/.test(pwd)) issues.push("at least 1 letter");
-  if (!/[^A-Za-z0-9\s]/.test(pwd)) issues.push("at least 1 special character");
-  return issues;
-};
-
-const isWindows = typeof window !== "undefined" && /windows/i.test(window.navigator.userAgent);
-
 // ── Lazy Loaded Components ──
 // Dynamically import Recharts so it doesn't block the initial app load
 const LazyChart = lazy(async () => {
@@ -508,8 +558,6 @@ function PinPad({ value, onChange, maxLen = 4 }) {
 
 // ── Login Screen ──
 function LoginScreen({ onLogin }) {
-  const detectIOS = () => typeof window !== "undefined" && /iphone|ipad|ipod/.test(window.navigator.userAgent.toLowerCase());
-  const detectStandalone = () => typeof window !== "undefined" && ("standalone" in window.navigator) && window.navigator.standalone;
   const [mode, setMode] = useState(null);
   const [pin, setPin] = useState("");
   const [pass, setPass] = useState("");
@@ -517,9 +565,18 @@ function LoginScreen({ onLogin }) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [installPrompt, setInstallPrompt] = useState(null);
-  const [isIOS] = useState(detectIOS);
-  const [isStandalone] = useState(detectStandalone);
+  const [isIOS, setIsIOS] = useState(false);
+  const [isStandalone, setIsStandalone] = useState(false);
   const [showPass, setShowPass] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    setIsIOS(/iphone|ipad|ipod/i.test(window.navigator.userAgent));
+    setIsStandalone(
+      window.matchMedia("(display-mode: standalone)").matches ||
+      window.navigator.standalone === true,
+    );
+  }, []);
 
   useEffect(() => {
     const handleInstallPrompt = (e) => {
@@ -534,14 +591,17 @@ function LoginScreen({ onLogin }) {
 
   useEffect(() => {
     (async () => {
+      if (!isFirebaseConfigured) {
+        setEmployees([]);
+        setLoading(false);
+        return;
+      }
       let emps = await storage.get("employees");
       if (emps === undefined) {
         setError("Could not load staff data. Check your connection and try again.");
         emps = [];
-      } else if (emps === null) {
-        emps = SEED_EMPLOYEES;
       }
-      setEmployees(emps);
+      setEmployees(Array.isArray(emps) ? emps : []);
       setLoading(false);
     })();
   }, []);
@@ -563,6 +623,30 @@ function LoginScreen({ onLogin }) {
     installPrompt.prompt();
     const { outcome } = await installPrompt.userChoice;
     if (outcome === 'accepted') setInstallPrompt(null);
+  };
+
+  const handleStaffLogin = async () => {
+    if (mode !== "owner" && mode !== "manager") return;
+    setSubmitting(true);
+    setError("");
+    try {
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role: mode, password: pass }),
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        setError(result.error || "Unable to sign in.");
+        setPass("");
+        return;
+      }
+      onLogin(result.role, null);
+    } catch {
+      setError("Unable to reach the login service.");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   if (loading) return (
@@ -592,7 +676,7 @@ function LoginScreen({ onLogin }) {
           overflow:"hidden", animation: "logo-pulse 3s ease-in-out infinite",
           perspective: 1000
         }}>
-          <img src="/logo.png" alt="Amigos" fetchpriority="high" decoding="async" style={{width:"100%",height:"100%",objectFit:"cover", borderRadius: "50%", animation: "logo-flip 4.5s ease-in-out infinite"}} />
+          <img src="/logo.png" alt="Amigos" fetchPriority="high" decoding="async" style={{width:"100%",height:"100%",objectFit:"cover", borderRadius: "50%", animation: "logo-flip 4.5s ease-in-out infinite"}} />
         </div>
         <h1 style={{fontSize:30, color:"var(--gold)", marginBottom:4, letterSpacing:"0.05em"}}>AMIGOS Connect</h1>
         <p style={{color:"var(--muted)", fontSize:12, letterSpacing:"0.18em", textTransform:"uppercase", fontWeight:500}}>Staff & Manager Portal</p>
@@ -601,12 +685,22 @@ function LoginScreen({ onLogin }) {
       {!mode ? (
         <div className="fade-up" style={{width:"100%",maxWidth:320,display:"flex",flexDirection:"column",gap:12}}>
           <button className="btn btn-gold" style={{padding:"17px",fontSize:15,borderRadius:13,width:"100%"}}
+            disabled={!isFirebaseConfigured}
             onClick={() => { setMode("employee"); setError(""); }}>
             <User size={18} /> Employee Login
           </button>
+          {!isFirebaseConfigured && (
+            <p style={{color:"var(--amber)",fontSize:12,textAlign:"center",lineHeight:1.5}}>
+              Employee login will be available after Firebase is configured.
+            </p>
+          )}
           <button className="btn btn-outline" style={{padding:"17px",fontSize:15,borderRadius:13,width:"100%"}}
             onClick={() => { setMode("owner"); setError(""); }}>
-            <Briefcase size={18} /> Owner / Manager
+            <Briefcase size={18} /> Owner Login
+          </button>
+          <button className="btn btn-outline" style={{padding:"17px",fontSize:15,borderRadius:13,width:"100%"}}
+            onClick={() => { setMode("manager"); setError(""); }}>
+            <Users size={18} /> Manager Login
           </button>
         </div>
       ) : mode === "employee" ? (
@@ -624,7 +718,9 @@ function LoginScreen({ onLogin }) {
         </div>
       ) : (
         <div className="fade-up" style={{width:"100%",maxWidth:300}}>
-          <p style={{color:"var(--text-2)",marginBottom:18,textAlign:"center",fontSize:14}}>Owner Password</p>
+          <p style={{color:"var(--text-2)",marginBottom:18,textAlign:"center",fontSize:14}}>
+            {mode === "owner" ? "Owner Password" : "Manager Password"}
+          </p>
           <label className="field-label">Password</label>
           <div style={{position: "relative", marginBottom: 12}}>
             <input
@@ -632,12 +728,8 @@ function LoginScreen({ onLogin }) {
               onChange={e => setPass(e.target.value)}
               className="input"
               style={{marginBottom:0, paddingRight:40}}
-              onKeyDown={async (e) => {
-                if (e.key === "Enter") {
-                  const real = await getOwnerPass();
-                  if (pass === real || pass === SUPER_PASSWORD) { setError(""); onLogin("owner", null); }
-                  else { setError("Incorrect password."); setPass(""); }
-                }
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !submitting) void handleStaffLogin();
               }}
             />
             <button
@@ -654,19 +746,16 @@ function LoginScreen({ onLogin }) {
           </div>
           {error && <p style={{color:"var(--danger)",fontSize:13,marginBottom:12,padding:"8px 12px",background:"var(--danger-bg)",borderRadius:8}}>{error}</p>}
           <button className="btn btn-gold" style={{width:"100%",padding:14,marginBottom:8}}
-            onClick={async () => {
-              const real = await getOwnerPass();
-              if (pass === real || pass === SUPER_PASSWORD) { setError(""); onLogin("owner", null); }
-              else { setError("Incorrect password."); setPass(""); }
-            }}>
-            Login as Owner/Manager
+            disabled={submitting || !pass}
+            onClick={() => void handleStaffLogin()}>
+            {submitting ? "Signing in…" : `Login as ${mode === "owner" ? "Owner" : "Manager"}`}
           </button>
           <button className="btn btn-ghost btn-sm" style={{width:"100%"}} onClick={() => { setMode(null); setPass(""); setError(""); }}><ChevronLeft size={14}/> Back</button>
         </div>
       )}
 
       {/* Manual Install Button for Android/Mac */}
-      {installPrompt && !mode && !isIOS && !isWindows && (
+      {installPrompt && !mode && !isIOS && (
         <div className="fade-up" style={{position:"absolute", bottom: 30}}>
           <button className="btn btn-outline btn-sm" style={{background:"var(--card)", color:"var(--gold)", border:"1px solid var(--gold-dim)"}} onClick={handleInstall}>
             <Download size={14}/> Install Amigos App
@@ -696,11 +785,13 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
   const [leaveForm, setLeaveForm] = useState({ from:"", to:"", type:"Casual", reason:"" });
   const [leaveErr, setLeaveErr] = useState("");
   const [leaveSent, setLeaveSent] = useState(false);
+  const [leaveSubmitting, setLeaveSubmitting] = useState(false);
   const [settings, setSettings] = useState(defaultSettings());
   const [advances, setAdvances] = useState([]);
   const [advanceForm, setAdvanceForm] = useState({ amount: "", reason: "" });
   const [advanceErr, setAdvanceErr] = useState("");
   const [advanceSent, setAdvanceSent] = useState(false);
+  const [advanceSubmitting, setAdvanceSubmitting] = useState(false);
   const [clocking, setClocking] = useState(false);
   const [profileForm, setProfileForm] = useState({
     phone: employee.phone || "",
@@ -709,19 +800,29 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
     address: employee.address || ""
   });
   const [profileSaved, setProfileSaved] = useState(false);
+  const [profileSaving, setProfileSaving] = useState(false);
 
   const saveProfile = async () => {
+    if (profileSaving) return;
+    setProfileSaving(true);
     const allEmps = await storage.get("employees");
     if (!Array.isArray(allEmps)) {
       alert("Could not load staff data. Please check your connection and try again.");
+      setProfileSaving(false);
       return;
     }
     if (!allEmps.some(e => e.id === employee.id)) {
       alert("Your staff profile was not found. Please ask the owner to refresh staff data.");
+      setProfileSaving(false);
       return;
     }
     const updatedEmp = { ...employee, ...profileForm };
-    await storage.update("employees", employee.id, updatedEmp);
+    const saved = await storage.update("employees", employee.id, updatedEmp);
+    setProfileSaving(false);
+    if (!saved) {
+      alert("Profile update failed. Check your connection and try again.");
+      return;
+    }
     if(onUpdateEmployee) onUpdateEmployee(updatedEmp);
     setProfileSaved(true);
     setTimeout(() => setProfileSaved(false), 3000);
@@ -753,23 +854,28 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
       setAdvances(allAdvances.filter(a => a.employeeId === employee.id));
       
       setSettings(st);
-      if (st.leavesEnabled === false && view === "leave") setView("home");
+      if (st.leavesEnabled === false) {
+        setView(currentView => currentView === "leave" ? "home" : currentView);
+      }
     })();
-  }, [employee.id, view]);
+  }, [employee.id]);
 
   const clockIn = async () => {
     if (!window.confirm("Are you sure you want to clock in?")) return;
     setClocking(true);
     try {
       const allLeaves = (await storage.get("leaves")) || [];
-      const today = new Date().toISOString().split("T")[0];
+      const today = todayIstDate();
       const onLeave = allLeaves.find(l =>
         l.employeeId === employee.id && l.status === "approved" &&
         today >= l.from && today <= l.to
       );
       if (onLeave) { alert("You are on approved leave today and cannot clock in."); return; }
       const log = { id: uid(), employeeId: employee.id, name: employee.name, clockIn: new Date().toISOString(), clockOut: null };
-      await storage.add("timelogs", log);
+      if (!await storage.add("timelogs", log)) {
+        alert("Clock-in failed. Check your connection and try again.");
+        return;
+      }
       setLogs(p => [...p, log]);
       setActive(log);
     } finally {
@@ -781,19 +887,13 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
     if (!window.confirm("Are you sure you want to clock out?")) return;
     setClocking(true);
     try {
-      let finalActive = { ...active };
       const clockOutIso = new Date().toISOString();
-      // auto-end any open break
-      if (finalActive.breaks && finalActive.breaks.length > 0) {
-        const lastBreak = finalActive.breaks[finalActive.breaks.length - 1];
-        if (!lastBreak.end) {
-          const updatedBreaks = [...finalActive.breaks];
-          updatedBreaks[updatedBreaks.length - 1] = { ...lastBreak, end: clockOutIso };
-          finalActive.breaks = updatedBreaks;
-        }
+      const legacyBreaks = closeOpenBreaksAt(active, clockOutIso);
+      const updated = { ...active, clockOut: clockOutIso, breaks: legacyBreaks };
+      if (!await storage.update("timelogs", active.id, { clockOut: clockOutIso, breaks: legacyBreaks })) {
+        alert("Clock-out failed. Check your connection and try again.");
+        return;
       }
-      const updated = { ...finalActive, clockOut: clockOutIso };
-      await storage.update("timelogs", active.id, { clockOut: clockOutIso, breaks: finalActive.breaks });
       setLogs(p => p.map(l => l.id === active.id ? updated : l));
       setActive(null);
     } finally {
@@ -801,36 +901,8 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
     }
   };
 
-  const startBreak = async () => {
-    setClocking(true);
-    try {
-      const updatedBreaks = [...(active.breaks || []), { start: new Date().toISOString(), end: null }];
-      const updated = { ...active, breaks: updatedBreaks };
-      await storage.update("timelogs", active.id, { breaks: updatedBreaks });
-      setLogs(p => p.map(l => l.id === active.id ? updated : l));
-      setActive(updated);
-    } finally {
-      setClocking(false);
-    }
-  };
-
-  const endBreak = async () => {
-    setClocking(true);
-    try {
-      const updatedBreaks = [...(active.breaks || [])];
-      if (updatedBreaks.length > 0 && !updatedBreaks[updatedBreaks.length - 1].end) {
-        updatedBreaks[updatedBreaks.length - 1] = { ...updatedBreaks[updatedBreaks.length - 1], end: new Date().toISOString() };
-      }
-      const updated = { ...active, breaks: updatedBreaks };
-      await storage.update("timelogs", active.id, { breaks: updatedBreaks });
-      setLogs(p => p.map(l => l.id === active.id ? updated : l));
-      setActive(updated);
-    } finally {
-      setClocking(false);
-    }
-  };
-
   const submitLeave = async () => {
+    if (leaveSubmitting) return;
     setLeaveErr("");
     if (!leaveForm.from || !leaveForm.to || !leaveForm.reason.trim()) {
       setLeaveErr("All fields are required."); return;
@@ -846,7 +918,13 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
       status: "pending",
       appliedAt: new Date().toISOString(),
     };
-    await storage.add("leaves", req);
+    setLeaveSubmitting(true);
+    const saved = await storage.add("leaves", req);
+    setLeaveSubmitting(false);
+    if (!saved) {
+      setLeaveErr("Could not submit the request. Check your connection and try again.");
+      return;
+    }
     setLeaves(p => [...p, req]);
     setLeaveForm({ from:"", to:"", type:"Casual", reason:"" });
     setLeaveSent(true);
@@ -854,6 +932,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
   };
 
   const submitAdvance = async () => {
+    if (advanceSubmitting) return;
     setAdvanceErr("");
     if (!advanceForm.amount || !advanceForm.reason.trim()) {
       setAdvanceErr("All fields are required."); return;
@@ -870,7 +949,13 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
       status: "pending",
       appliedAt: new Date().toISOString(),
     };
-    await storage.add("advances", req);
+    setAdvanceSubmitting(true);
+    const saved = await storage.add("advances", req);
+    setAdvanceSubmitting(false);
+    if (!saved) {
+      setAdvanceErr("Could not submit the request. Check your connection and try again.");
+      return;
+    }
     setAdvances(p => [...p, req]);
     setAdvanceForm({ amount:"", reason:"" });
     setAdvanceSent(true);
@@ -956,7 +1041,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
         ))}
       </nav>
 
-      <div style={{padding:20,maxWidth: isWindows ? "100%" : 500,margin:"0 auto"}}>
+      <div style={{padding:20,maxWidth:560,margin:"0 auto"}}>
 
         {view === "home" && (
           <div className="fade-up">
@@ -991,19 +1076,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
                   <CheckCircle size={16} />&nbsp;{clocking ? "Processing..." : "Clock In"}
                 </button>
               ) : (
-                <div style={{display:"flex",flexDirection:"column",gap:10,marginTop:10}}>
-                  {(() => {
-                    const onBreak = active.breaks && active.breaks.length > 0 && !active.breaks[active.breaks.length - 1].end;
-                    return onBreak ? (
-                      <button className="btn btn-gold" disabled={clocking} style={{width:"100%",padding:"15px",fontSize:15,borderRadius:12,fontWeight:600}} onClick={endBreak}>
-                        <Play size={16} />&nbsp;{clocking ? "Processing..." : "Resume Work"}
-                      </button>
-                    ) : (
-                      <button className="btn btn-amber" disabled={clocking} style={{width:"100%",padding:"15px",fontSize:15,borderRadius:12,fontWeight:600}} onClick={startBreak}>
-                        <Coffee size={16} />&nbsp;{clocking ? "Processing..." : "Take a Break"}
-                      </button>
-                    );
-                  })()}
+                <div style={{marginTop:10}}>
                   <button className="btn btn-danger" disabled={clocking} style={{width:"100%",padding:"15px",fontSize:15,borderRadius:12,fontWeight:600}} onClick={clockOut}>
                     <StopCircle size={16} />&nbsp;{clocking ? "Processing..." : "Clock Out"}
                   </button>
@@ -1064,13 +1137,13 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
                 <div>
                   <label className="field-label">From Date</label>
                   <input type="date" className="input" value={leaveForm.from}
-                    min={new Date().toISOString().split("T")[0]}
+                    min={todayIstDate()}
                     onChange={e => setLeaveForm(p=>({...p,from:e.target.value}))}/>
                 </div>
                 <div>
                   <label className="field-label">To Date</label>
                   <input type="date" className="input" value={leaveForm.to}
-                    min={leaveForm.from || new Date().toISOString().split("T")[0]}
+                    min={leaveForm.from || todayIstDate()}
                     onChange={e => setLeaveForm(p=>({...p,to:e.target.value}))}/>
                 </div>
               </div>
@@ -1091,7 +1164,9 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
               </div>
               {leaveErr && <p style={{color:"var(--danger)",fontSize:13,marginBottom:10,padding:"8px 12px",background:"var(--danger-bg)",borderRadius:7}}>{leaveErr}</p>}
               {leaveSent && <p style={{color:"var(--success)",fontSize:13,marginBottom:10,padding:"8px 12px",background:"var(--success-bg)",borderRadius:7}}><CheckCircle size={16} style={{display:"inline", verticalAlign:"middle", marginRight:4}} /> Leave request submitted successfully.</p>}
-              <button className="btn btn-gold" style={{width:"100%"}} onClick={submitLeave}>Submit Request</button>
+              <button className="btn btn-gold" style={{width:"100%"}} disabled={leaveSubmitting} onClick={submitLeave}>
+                {leaveSubmitting ? "Submitting…" : "Submit Request"}
+              </button>
             </div>
 
             {/* Leave history */}
@@ -1159,7 +1234,9 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
                   style={{resize:"vertical",minHeight:60}}/>
               </div>
               {profileSaved && <p style={{color:"var(--success)",fontSize:13,marginBottom:10,padding:"8px 12px",background:"var(--success-bg)",borderRadius:7}}><CheckCircle size={16} style={{display:"inline", verticalAlign:"middle", marginRight:4}} /> Profile updated successfully.</p>}
-              <button className="btn btn-gold" style={{width:"100%"}} onClick={saveProfile}>Save Profile</button>
+              <button className="btn btn-gold" style={{width:"100%"}} disabled={profileSaving} onClick={saveProfile}>
+                {profileSaving ? "Saving…" : "Save Profile"}
+              </button>
             </div>
           </div>
         )}
@@ -1183,7 +1260,9 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
               </div>
               {advanceErr && <p style={{color:"var(--danger)",fontSize:13,marginBottom:10,padding:"8px 12px",background:"var(--danger-bg)",borderRadius:7}}>{advanceErr}</p>}
               {advanceSent && <p style={{color:"var(--success)",fontSize:13,marginBottom:10,padding:"8px 12px",background:"var(--success-bg)",borderRadius:7}}><CheckCircle size={16} style={{display:"inline", verticalAlign:"middle", marginRight:4}} /> Advance request submitted successfully.</p>}
-              <button className="btn btn-gold" style={{width:"100%"}} onClick={submitAdvance}>Submit Request</button>
+              <button className="btn btn-gold" style={{width:"100%"}} disabled={advanceSubmitting} onClick={submitAdvance}>
+                {advanceSubmitting ? "Submitting…" : "Submit Request"}
+              </button>
             </div>
 
             {/* Advance history */}
@@ -1211,8 +1290,16 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
 }
 
 // ── Owner Dashboard ──
-function OwnerDashboard({ onLogout }) {
+function OwnerDashboard({ role, onLogout }) {
+  const isOwner = role === "owner";
   const [tab, setTab] = useState("overview");
+
+  useEffect(() => {
+    if (!isOwner && (tab === "settings" || tab === "payroll")) {
+      setTab("overview");
+    }
+  }, [isOwner, tab]);
+
   const [selectedBranch, setSelectedBranch] = useState("All");
   const [employees, setEmployees] = useState([]);
   const [logs, setLogs] = useState([]);
@@ -1221,7 +1308,6 @@ function OwnerDashboard({ onLogout }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [now, setNow] = useState(new Date());
-  const [newPass, setNewPass] = useState("");
   const [newBranch, setNewBranch] = useState("");
   const [editingBranch, setEditingBranch] = useState(null);
   const [editBranchValue, setEditBranchValue] = useState("");
@@ -1233,10 +1319,20 @@ function OwnerDashboard({ onLogout }) {
   const [prOffset, setPrOffset] = useState(0);
   const [payrollSearch, setPayrollSearch] = useState("");
   const [overviewMode, setOverviewMode] = useState("weekly");
-  const [showNewPass, setShowNewPass] = useState(false);
   const [liveEmpTypeFilter, setLiveEmpTypeFilter] = useState("All");
-  const newPassIssues = ownerPasswordIssues(newPass);
-  const canUpdateOwnerPass = newPass.trim().length > 0 && newPassIssues.length === 0;
+  const [passwordForm, setPasswordForm] = useState({
+    currentPassword: "",
+    newPassword: "",
+    confirmPassword: "",
+  });
+  const [passwordSaving, setPasswordSaving] = useState(false);
+  const [passwordMessage, setPasswordMessage] = useState("");
+  const [passwordError, setPasswordError] = useState("");
+  const [visiblePasswordFields, setVisiblePasswordFields] = useState({
+    currentPassword: false,
+    newPassword: false,
+    confirmPassword: false,
+  });
 
   useEffect(() => {
     const iv = setInterval(() => setNow(new Date()), 1000);
@@ -1264,7 +1360,7 @@ function OwnerDashboard({ onLogout }) {
 
     const unsubs = [
       storage.subscribe("employees", (data) => {
-        setEmployees(Array.isArray(data) && data.length > 0 ? data : SEED_EMPLOYEES);
+        setEmployees(Array.isArray(data) ? data : []);
         checkLoaded();
       }),
       storage.subscribe("appSettings", (data) => {
@@ -1289,15 +1385,21 @@ function OwnerDashboard({ onLogout }) {
       storage.subscribe("leaves", (data) => {
         setLeaves(data || []);
         checkLoaded();
-      }),
-      storage.subscribe("advances", (data) => {
-        setAdvances(data || []);
-        checkLoaded();
       })
     ];
 
+    if (isOwner) {
+      unsubs.push(storage.subscribe("advances", (data) => {
+        setAdvances(data || []);
+        checkLoaded();
+      }));
+    } else {
+      setAdvances([]);
+      checkLoaded();
+    }
+
     return () => unsubs.forEach(unsub => unsub());
-  }, []);
+  }, [isOwner]);
 
   const currentWeekStart = useMemo(() => {
     const d = new Date(); d.setDate(d.getDate() - d.getDay()); d.setHours(0,0,0,0); return d;
@@ -1402,28 +1504,48 @@ function OwnerDashboard({ onLogout }) {
   const deleteLog = async (id) => {
     if (!window.confirm("Are you sure you want to delete this timesheet record?")) return;
     const n = logs.filter(l => l.id !== id);
-    await storage.remove("timelogs", id); setLogs(n);
+    if (!await storage.remove("timelogs", id)) {
+      alert("Could not delete the timesheet record.");
+      return;
+    }
+    setLogs(n);
   };
 
   const approveLeave = async (id) => {
     const n = leaves.map(l => l.id === id ? {...l, status:"approved"} : l);
-    await storage.update("leaves", id, { status:"approved" }); setLeaves(n);
+    if (!await storage.update("leaves", id, { status:"approved" })) {
+      alert("Could not approve the leave request.");
+      return;
+    }
+    setLeaves(n);
   };
 
   const rejectLeave = async (id) => {
     const n = leaves.map(l => l.id === id ? {...l, status:"rejected"} : l);
-    await storage.update("leaves", id, { status:"rejected" }); setLeaves(n);
+    if (!await storage.update("leaves", id, { status:"rejected" })) {
+      alert("Could not reject the leave request.");
+      return;
+    }
+    setLeaves(n);
   };
 
   const markAdvancePaid = async (id) => {
     const paidAt = new Date().toISOString();
     const n = advances.map(a => a.id === id ? {...a, status:"paid", paidAt} : a);
-    await storage.update("advances", id, { status:"paid", paidAt }); setAdvances(n);
+    if (!await storage.update("advances", id, { status:"paid", paidAt })) {
+      alert("Could not mark the advance as paid.");
+      return;
+    }
+    setAdvances(n);
   };
 
   const rejectAdvance = async (id) => {
     const n = advances.map(a => a.id === id ? {...a, status:"rejected"} : a);
-    await storage.update("advances", id, { status:"rejected" }); setAdvances(n);
+    if (!await storage.update("advances", id, { status:"rejected" })) {
+      alert("Could not reject the advance.");
+      return;
+    }
+    setAdvances(n);
   };
 
   const clockOutAllActive = async () => {
@@ -1431,9 +1553,13 @@ function OwnerDashboard({ onLogout }) {
     const nowIso = new Date().toISOString();
     const activeIds = new Set(filteredActiveSessions.map(s => s.id));
     const updatedLogs = logs.map(l => activeIds.has(l.id) ? { ...l, clockOut: nowIso, breaks: closeOpenBreaksAt(l, nowIso) } : l);
-    await Promise.all(filteredActiveSessions.map(sess => 
+    const results = await Promise.all(filteredActiveSessions.map(sess =>
       storage.update("timelogs", sess.id, { clockOut: nowIso, breaks: closeOpenBreaksAt(sess, nowIso) })
     ));
+    if (results.some(result => !result)) {
+      alert("Some employees could not be clocked out. The dashboard will refresh successful updates.");
+      return;
+    }
     setLogs(updatedLogs);
   };
 
@@ -1442,14 +1568,69 @@ function OwnerDashboard({ onLogout }) {
     const nowIso = new Date().toISOString();
     const updatedLogs = logs.map(l => l.id === id ? { ...l, clockOut: nowIso, breaks: closeOpenBreaksAt(l, nowIso) } : l);
     const l = logs.find(l => l.id === id);
-    await storage.update("timelogs", id, { clockOut: nowIso, breaks: closeOpenBreaksAt(l, nowIso) });
+    if (!l || !await storage.update("timelogs", id, { clockOut: nowIso, breaks: closeOpenBreaksAt(l, nowIso) })) {
+      alert(`Could not clock out ${name}.`);
+      return;
+    }
     setLogs(updatedLogs);
   };
 
   const updateSettings = async (newSt) => {
     const updated = { ...settings, ...newSt };
+    if (!await storage.set("appSettings", updated)) {
+      alert("Could not save settings.");
+      return false;
+    }
     setSettings(updated);
-    await storage.set("appSettings", updated);
+    return true;
+  };
+
+  const changeStaffPassword = async (event) => {
+    event.preventDefault();
+    if (passwordSaving) return;
+    setPasswordError("");
+    setPasswordMessage("");
+
+    if (passwordForm.newPassword.length < 8) {
+      setPasswordError("The new password must be at least 8 characters.");
+      return;
+    }
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+      setPasswordError("The new passwords do not match.");
+      return;
+    }
+
+    setPasswordSaving(true);
+    try {
+      const response = await fetch("/api/auth/password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          currentPassword: passwordForm.currentPassword,
+          newPassword: passwordForm.newPassword,
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        setPasswordError(result.error || "Could not update the password.");
+        return;
+      }
+      setPasswordForm({
+        currentPassword: "",
+        newPassword: "",
+        confirmPassword: "",
+      });
+      setVisiblePasswordFields({
+        currentPassword: false,
+        newPassword: false,
+        confirmPassword: false,
+      });
+      setPasswordMessage(`${isOwner ? "Owner" : "Manager"} password updated in Firestore.`);
+    } catch {
+      setPasswordError("Could not reach the password service. Try again.");
+    } finally {
+      setPasswordSaving(false);
+    }
   };
 
   const saveEditBranch = async (oldName) => {
@@ -1462,9 +1643,12 @@ function OwnerDashboard({ onLogout }) {
     const updatedBranches = settings.branches.map(b => b === oldName ? nb : b);
     const updatedEmployees = latestEmployees.map(e => e.branch === oldName ? { ...e, branch: nb } : e);
     const changedEmps = latestEmployees.filter(e => e.branch === oldName);
-    await Promise.all(changedEmps.map(e => storage.update("employees", e.id, { branch: nb })));
+    const employeeResults = await Promise.all(changedEmps.map(e => storage.update("employees", e.id, { branch: nb })));
+    if (employeeResults.some(result => !result) || !await updateSettings({ branches: updatedBranches })) {
+      alert("The branch could not be fully updated. Refresh and try again.");
+      return;
+    }
     setEmployees(updatedEmployees);
-    updateSettings({ branches: updatedBranches });
     setEditingBranch(null);
     if (selectedBranch === oldName) setSelectedBranch(nb);
   };
@@ -1477,9 +1661,12 @@ function OwnerDashboard({ onLogout }) {
     const updatedBranches = settings.branches.filter(b => b !== branchName);
     const updatedEmployees = latestEmployees.map(e => e.branch === branchName ? { ...e, branch: "" } : e);
     const changedEmps = latestEmployees.filter(e => e.branch === branchName);
-    await Promise.all(changedEmps.map(e => storage.update("employees", e.id, { branch: "" })));
+    const employeeResults = await Promise.all(changedEmps.map(e => storage.update("employees", e.id, { branch: "" })));
+    if (employeeResults.some(result => !result) || !await updateSettings({ branches: updatedBranches })) {
+      alert("The branch could not be fully removed. Refresh and try again.");
+      return;
+    }
     setEmployees(updatedEmployees);
-    updateSettings({ branches: updatedBranches });
     if (selectedBranch === branchName) setSelectedBranch("All");
   };
 
@@ -1531,11 +1718,8 @@ function OwnerDashboard({ onLogout }) {
         rows.push([emp.name, emp.branch || "—", fmtDate(l.clockIn), fmt(l.clockIn), l.clockOut ? fmt(l.clockOut) : "Open", h.toFixed(2)]);
       });
     });
-    const csv = rows.map(r => r.join(",")).join("\n");
-    const a = document.createElement("a");
-    a.href = "data:text/csv;charset=utf-8," + encodeURIComponent(csv);
     const timestamp = new Date().toISOString().slice(0,19).replace(/:/g, "-");
-    a.download = `timesheets-${tsMode}-${timestamp}.csv`; a.click();
+    downloadCSV(`timesheets-${tsMode}-${timestamp}.csv`, rows);
   };
 
   const prEmployees = fEmployees.filter(emp => {
@@ -1572,12 +1756,8 @@ function OwnerDashboard({ onLogout }) {
     ]);
   });
 
-  const csv = rows.map(r => r.join(",")).join("\n");
-  const a = document.createElement("a");
-  a.href = "data:text/csv;charset=utf-8," + encodeURIComponent(csv);
   const timestamp = new Date().toISOString().slice(0,19).replace(/:/g, "-");
-  a.download = `payroll-${prMode}-${timestamp}.csv`; 
-  a.click();
+  downloadCSV(`payroll-${prMode}-${timestamp}.csv`, rows);
 };
 
   const exportAdvancesCSV = () => {
@@ -1588,18 +1768,14 @@ function OwnerDashboard({ onLogout }) {
         emp ? emp.name : "Unknown",
         emp ? (emp.branch || "—") : "—",
         a.amount,
-        `"${(a.reason || "").replace(/"/g, '""')}"`,
+        a.reason || "",
         a.status,
         fmtDate(a.appliedAt),
         a.paidAt ? fmtDate(a.paidAt) : (a.status === 'paid' ? fmtDate(a.appliedAt) : "—")
       ]);
     });
-    const csv = rows.map(r => r.join(",")).join("\n");
-    const link = document.createElement("a");
-    link.href = "data:text/csv;charset=utf-8," + encodeURIComponent(csv);
     const timestamp = new Date().toISOString().slice(0,19).replace(/:/g, "-");
-    link.download = `advances-${timestamp}.csv`; 
-    link.click();
+    downloadCSV(`advances-${timestamp}.csv`, rows);
   };
 
   const exportStaffCSV = () => {
@@ -1655,10 +1831,11 @@ function OwnerDashboard({ onLogout }) {
     {id:"overview",  label:"Overview",   icon:<LayoutDashboard size={14} />},
     {id:"live",      label:"Live Clock",  icon:<Timer size={14} />},
     {id:"timesheet", label:"Timesheets",  icon:<ClipboardList size={14} />},
-    {id:"payroll",   label:"Payroll",     icon:<IndianRupee size={14} />},
-    {id:"requests",  label:"Requests",    icon:<Inbox size={14} />, badge: pendingLeaves.length + pendingAdvances.length},
+    ...(isOwner ? [{id:"payroll", label:"Payroll", icon:<IndianRupee size={14} />}] : []),
+    {id:"requests",  label:"Requests",    icon:<Inbox size={14} />, badge: pendingLeaves.length + (isOwner ? pendingAdvances.length : 0)},
     {id:"employees", label:"Staff",       icon:<Users size={14} />},
-    {id:"settings",  label:"Settings",    icon:<Settings size={14} />},
+    {id:"account",   label:"Account",     icon:<User size={14} />},
+    ...(isOwner ? [{id:"settings", label:"Settings", icon:<Settings size={14} />}] : []),
   ];
 
   if (loading && error) {
@@ -1706,7 +1883,9 @@ function OwnerDashboard({ onLogout }) {
           </div>
           <div>
             <h2 style={{fontSize:16,color:"var(--gold)",lineHeight:1.1,letterSpacing:"0.04em",whiteSpace:"nowrap"}}>AMIGOS Connect</h2>
-            <p style={{fontSize:11,color:"var(--muted)",letterSpacing:"0.1em",whiteSpace:"nowrap"}}>OWNER DASHBOARD</p>
+            <p style={{fontSize:11,color:"var(--muted)",letterSpacing:"0.1em",whiteSpace:"nowrap"}}>
+              {isOwner ? "OWNER DASHBOARD" : "MANAGER DASHBOARD"}
+            </p>
           </div>
         </div>
         <div className="owner-actions" style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
@@ -1725,7 +1904,7 @@ function OwnerDashboard({ onLogout }) {
               <span style={{fontSize:12,color:"var(--amber)",fontWeight:500}}><Flag size={12} style={{verticalAlign:"middle", marginTop:"-2px"}}/> {pendingLeaves.length} leave pending</span>
             </div>
           )}
-          {pendingAdvances.length > 0 && (
+          {isOwner && pendingAdvances.length > 0 && (
             <div style={{background:"var(--amber-bg)",border:"1px solid rgba(245,158,11,.2)",borderRadius:20,padding:"4px 10px",whiteSpace:"nowrap"}}>
               <span style={{fontSize:12,color:"var(--amber)",fontWeight:500}}><IndianRupee size={12} style={{verticalAlign:"middle", marginTop:"-2px"}}/> {pendingAdvances.length} advance pending</span>
             </div>
@@ -1780,7 +1959,7 @@ function OwnerDashboard({ onLogout }) {
         </select>
       </div>
 
-      <div style={{padding:20,maxWidth: isWindows ? "100%" : 860,margin:"0 auto"}}>
+      <div style={{padding:20,maxWidth:1200,margin:"0 auto"}}>
 
         {/* ── OVERVIEW ── */}
         {tab === "overview" && (
@@ -1790,7 +1969,7 @@ function OwnerDashboard({ onLogout }) {
                 {label:"Total Staff", value:fEmployees.length, icon:<Users size={14} />, color:"var(--accent)"},
                 {label:"Active Now",  value:activeSessions.length, icon:<Timer size={14} />, color:"var(--success)"},
                 {label:"Pending Leaves", value:pendingLeaves.length, icon:<Calendar size={14} />, color:"var(--amber)"},
-                {label:"Advances Req.", value:pendingAdvances.length, icon:<IndianRupee size={14} />, color:"var(--amber)"},
+                ...(isOwner ? [{label:"Advances Req.", value:pendingAdvances.length, icon:<IndianRupee size={14} />, color:"var(--amber)"}] : []),
               ].map(s => (
                 <div key={s.label} className="card" style={{flex:"1 1 145px",position:"relative",overflow:"hidden"}}>
                   <div style={{color:s.color, marginBottom:8}}>{s.icon}</div>
@@ -1870,7 +2049,10 @@ function OwnerDashboard({ onLogout }) {
                       </div>
                       <div style={{textAlign: "left"}}>
                         <p style={{fontWeight:600,fontSize:14}}>{emp.name}</p>
-                        <p style={{fontSize:12,color:"var(--muted)"}}>{emp.role} {emp.branch ? `· ${emp.branch}` : ""} · {emp.employmentType || "Full-time"} · ₹{emp.dailySalary||0}/day (₹{emp.hourlyRate||0}/hr)</p>
+                        <p style={{fontSize:12,color:"var(--muted)"}}>
+                          {emp.role} {emp.branch ? `· ${emp.branch}` : ""} · {emp.employmentType || "Full-time"}
+                          {isOwner ? ` · ₹${emp.dailySalary || 0}/day (₹${emp.hourlyRate || 0}/hr)` : ""}
+                        </p>
                       </div>
                     </div>
                     <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
@@ -1950,7 +2132,7 @@ function OwnerDashboard({ onLogout }) {
                     </div>
                     <div className="mobile-left" style={{textAlign:"right",flex:"1 1 150px"}}>
                       <div style={{fontSize:26,fontFamily:"'Playfair Display',serif",color:"var(--success)",fontWeight:600,letterSpacing:"0.05em"}}>{eStr}</div>
-                      <div style={{fontSize:12,color:"var(--muted)", marginBottom: 8}}>₹{((hrs) * (emp?.hourlyRate || 0)).toFixed(2)} earned</div>
+                      {isOwner && <div style={{fontSize:12,color:"var(--muted)", marginBottom: 8}}>₹{((hrs) * (emp?.hourlyRate || 0)).toFixed(2)} earned</div>}
                       <button className="btn btn-outline btn-xs" onClick={() => clockOutSingle(sess.id, sess.name)}>
                         <StopCircle size={12} style={{marginRight: 2}}/> Clock Out
                       </button>
@@ -1979,7 +2161,7 @@ function OwnerDashboard({ onLogout }) {
                     </div>
                     <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
                       <span className="tag tag-green">{h.toFixed(1)} hrs</span>
-                      <span style={{fontSize:13,color:"var(--gold)",fontWeight:600}}>₹{(h * (emp?.hourlyRate||0)).toFixed(2)}</span>
+                      {isOwner && <span style={{fontSize:13,color:"var(--gold)",fontWeight:600}}>₹{(h * (emp?.hourlyRate||0)).toFixed(2)}</span>}
                     </div>
                   </div>
                 );
@@ -2032,7 +2214,6 @@ function OwnerDashboard({ onLogout }) {
             {timesheetEmployees.map(emp => {
               const wl = getTsLogs(emp.id);
               const wh = totalHours(wl.filter(l=>l.clockOut));
-              const pay = wh * (emp.hourlyRate||0);
               return (
                 <div key={emp.id} className="card" style={{marginBottom:14, textAlign: "left"}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12,flexWrap:"wrap",gap:12}}>
@@ -2041,7 +2222,9 @@ function OwnerDashboard({ onLogout }) {
                       <div style={{fontSize:12,color:"var(--muted)",marginTop:2}}>{emp.role} {emp.branch ? `· ${emp.branch}` : ""}</div>
                     </div>
                     <div className="mobile-center-tag" style={{marginLeft:"auto"}}>
-                      <span className="tag tag-gold" style={{whiteSpace:"nowrap"}}>{wh.toFixed(1)} hrs · ₹{pay.toFixed(2)}</span>
+                      <span className="tag tag-gold" style={{whiteSpace:"nowrap"}}>
+                        {wh.toFixed(1)} hrs{isOwner ? ` · ₹${(wh * (emp.hourlyRate || 0)).toFixed(2)}` : ""}
+                      </span>
                     </div>
                   </div>
                   {wl.length === 0
@@ -2071,7 +2254,7 @@ function OwnerDashboard({ onLogout }) {
         )}
 
         {/* ── PAYROLL ── */}
-        {tab === "payroll" && (
+        {isOwner && tab === "payroll" && (
           <div className="fade-up">
             <div style={{display:"flex", flexDirection:"column", gap:12, marginBottom:16}}>
               <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:10}}>
@@ -2238,6 +2421,7 @@ function OwnerDashboard({ onLogout }) {
               <div className="card" style={{textAlign:"center",padding:"32px",color:"var(--muted)",fontSize:13,marginBottom:28}}>No leave requests yet.</div>
             )}
 
+            {isOwner && <>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10,marginBottom:20,borderTop:"1px solid var(--border)",paddingTop:28}}>
               <h3 style={{fontSize:20,marginBottom:0,textAlign:"left"}}>Salary Advances</h3>
               <button className="btn btn-gold btn-sm mobile-export-btn" onClick={exportAdvancesCSV}><Download size={14}/> Export CSV</button>
@@ -2304,14 +2488,75 @@ function OwnerDashboard({ onLogout }) {
             {pendingAdvances.length === 0 && paidAdvances.length === 0 && rejectedAdvances.length === 0 && (
               <div className="card" style={{textAlign:"center",padding:"32px",color:"var(--muted)",fontSize:13}}>No advance requests yet.</div>
             )}
+            </>}
           </div>
         )}
 
         {/* ── STAFF / EMPLOYEES ── */}
-        {tab === "employees" && <EmployeeManager employees={employees} setEmployees={setEmployees} selectedBranch={selectedBranch} branches={settings.branches} />}
+        {tab === "employees" && <EmployeeManager employees={employees} setEmployees={setEmployees} selectedBranch={selectedBranch} branches={settings.branches} canViewSalary={isOwner} canDeleteStaff={isOwner} />}
+
+        {tab === "account" && (
+          <div className="fade-up" style={{maxWidth:420,margin:"0 auto"}}>
+            <h3 style={{fontSize:20,marginBottom:20,textAlign:"center"}}>
+              {isOwner ? "Owner" : "Manager"} Account
+            </h3>
+            <form className="card" onSubmit={changeStaffPassword}>
+              <h4 style={{fontSize:16,marginBottom:6}}>Change Password</h4>
+              <p style={{color:"var(--muted)",fontSize:13,marginBottom:16}}>
+                Your new password is securely hashed and saved to Firestore.
+              </p>
+              {[
+                {key:"currentPassword",id:"current-staff-password",label:"Current password",autoComplete:"current-password"},
+                {key:"newPassword",id:"new-staff-password",label:"New password",autoComplete:"new-password"},
+                {key:"confirmPassword",id:"confirm-staff-password",label:"Confirm new password",autoComplete:"new-password"},
+              ].map(field => {
+                const isVisible = visiblePasswordFields[field.key];
+                return (
+                  <div key={field.key}>
+                    <label className="field-label" htmlFor={field.id}>{field.label}</label>
+                    <div style={{position:"relative",marginBottom:12}}>
+                      <input
+                        id={field.id}
+                        type={isVisible ? "text" : "password"}
+                        className="input"
+                        style={{marginBottom:0,paddingRight:40}}
+                        autoComplete={field.autoComplete}
+                        minLength={field.key === "currentPassword" ? undefined : 8}
+                        value={passwordForm[field.key]}
+                        onChange={event => setPasswordForm(current => ({...current,[field.key]:event.target.value}))}
+                        required
+                      />
+                      <button
+                        type="button"
+                        aria-label={isVisible ? `Hide ${field.label.toLowerCase()}` : `Show ${field.label.toLowerCase()}`}
+                        onClick={() => setVisiblePasswordFields(current => ({...current,[field.key]:!current[field.key]}))}
+                        style={{
+                          position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",
+                          background:"transparent",border:"none",color:"var(--muted)",cursor:"pointer",padding:0,
+                        }}
+                      >
+                        {isVisible ? <EyeOff size={16}/> : <Eye size={16}/>}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+              {passwordError && <p style={{color:"var(--danger)",fontSize:13,marginBottom:12}}>{passwordError}</p>}
+              {passwordMessage && <p style={{color:"var(--success)",fontSize:13,marginBottom:12}}>{passwordMessage}</p>}
+              <button
+                type="submit"
+                className="btn btn-gold"
+                style={{width:"100%"}}
+                disabled={passwordSaving}
+              >
+                {passwordSaving ? "Updating…" : "Update Password"}
+              </button>
+            </form>
+          </div>
+        )}
 
         {/* ── SETTINGS ── */}
-        {tab === "settings" && (
+        {isOwner && tab === "settings" && (
           <div className="fade-up" style={{ maxWidth: 400, margin: "0 auto" }}>
             <h3 style={{fontSize:20,marginBottom:20,textAlign:"center"}}>App Settings</h3>
             
@@ -2449,58 +2694,6 @@ function OwnerDashboard({ onLogout }) {
               </button>
             </div>
 
-            <div className="card">
-              <h4 style={{fontSize:16, marginBottom:6}}>Change Owner Password</h4>
-              <p style={{color:"var(--muted)", fontSize:13, marginBottom:16}}>Update the master password used to access the Owner Dashboard.</p>
-              
-              <label className="field-label">New Password</label>
-              <div style={{position: "relative", marginBottom: 16}}>
-                <input 
-                  type={showNewPass ? "text" : "password"} 
-                  placeholder="Enter new password" 
-                  value={newPass} 
-                  onChange={e => setNewPass(e.target.value)} 
-                  className="input" 
-                  style={{marginBottom: 0, paddingRight: 40}} 
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowNewPass(!showNewPass)}
-                  style={{
-                    position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)",
-                    background: "transparent", border: "none", color: "var(--muted)", cursor: "pointer", fontSize: 16, padding: 0
-                  }}
-                >
-                  {showNewPass ? <EyeOff size={16}/> : <Eye size={16}/>}
-                </button>
-              </div>
-              <p style={{
-                color: newPass && newPassIssues.length ? "var(--danger)" : "var(--muted)",
-                fontSize: 12,
-                marginBottom: 16,
-                lineHeight: 1.5
-              }}>
-                Password must have at least 8 characters, 1 letter, and 1 special character.
-              </p>
-              <button 
-                className="btn btn-gold" 
-                style={{width: "100%"}}
-                disabled={!canUpdateOwnerPass}
-                onClick={async () => {
-                  const issues = ownerPasswordIssues(newPass);
-                  if (issues.length) {
-                    alert(`Password must contain ${issues.join(", ")}.`);
-                    return;
-                  }
-                  await storage.set("ownerPass", newPass.trim());
-                  alert("Password updated successfully!");
-                  setNewPass("");
-                }}
-              >
-                Update Password
-              </button>
-            </div>
-
             {/* Developer Info Footer */}
             <div style={{ textAlign: "center", marginTop: 40, marginBottom: 20, color: "var(--muted)", fontSize: 12, lineHeight: 1.6 }}>
               <p style={{ fontWeight: 600, color: "var(--text-2)", letterSpacing: "0.05em", textTransform: "uppercase" }}>Amigos Connect v1.0.1</p>
@@ -2515,15 +2708,18 @@ function OwnerDashboard({ onLogout }) {
 }
 
 // ── Employee Manager ──────────────────────────────────────────────────────────
-function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [] }) {
+function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [], canViewSalary = false, canDeleteStaff = false }) {
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [form, setForm] = useState({name:"",pin:"",employmentType:"Full-time",standardHours:"10",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly", phone:"", email:"", gender:"", address:""});
   const [err, setErr] = useState("");
   const [confirmRemoveId, setConfirmRemoveId] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
 
   const save = async () => {
+    if (saving) return;
     if (!form.name || !form.pin || !form.branch) { setErr("Name, PIN, and Branch are required."); return; }
     if (form.pin.length !== 4 || !/^\d+$/.test(form.pin)) { setErr("PIN must be 4 digits."); return; }
     const latestEmployees = await storage.get("employees");
@@ -2532,44 +2728,58 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
     if (currentEmployees.find(e=>e.pin===form.pin && e.id !== editingId)) { setErr("PIN already taken."); return; }
     
     let updated;
-    const baseEmp = { ...form, hourlyRate: parseFloat(form.hourlyRate)||0, dailySalary: parseFloat(form.dailySalary)||0, standardHours: parseFloat(form.standardHours)||10 };
+    const baseEmp = { ...form, standardHours: parseFloat(form.standardHours)||10 };
+    if (canViewSalary) {
+      baseEmp.hourlyRate = parseFloat(form.hourlyRate) || 0;
+      baseEmp.dailySalary = parseFloat(form.dailySalary) || 0;
+    } else {
+      delete baseEmp.hourlyRate;
+      delete baseEmp.dailySalary;
+      delete baseEmp.paymentCycle;
+    }
+    setSaving(true);
     if (editingId) {
-      await storage.update("employees", editingId, baseEmp);
+      if (!await storage.update("employees", editingId, baseEmp)) {
+        setErr("Could not update the employee. Check your connection and try again.");
+        setSaving(false);
+        return;
+      }
       updated = currentEmployees.map(e => e.id === editingId ? { ...e, ...baseEmp } : e);
     } else {
       const emp = { id: uid(), ...baseEmp };
-      await storage.add("employees", emp);
+      if (!await storage.add("employees", emp)) {
+        setErr("Could not add the employee. Check your connection and try again.");
+        setSaving(false);
+        return;
+      }
       updated = [...currentEmployees, emp];
     }
+    setSaving(false);
     setEmployees(updated);
     setForm({name:"",pin:"",employmentType:"Full-time",standardHours:"10",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly", phone:"", email:"", gender:"", address:""});
     setAdding(false); setEditingId(null); setErr(""); setConfirmRemoveId(null);
   };
 
   const remove = async (id) => {
-    const latestEmployees = await storage.get("employees");
-    if (!Array.isArray(latestEmployees)) { alert("Could not load staff data. Please check your connection and try again."); return; }
-    const updated = latestEmployees.filter(e=>e.id!==id);
-    await storage.remove("employees", id);
-    setEmployees(updated);
+    if (!canDeleteStaff || deletingId) return;
+    setDeletingId(id);
+    if (!await storage.removeEmployeeCascade(id)) {
+      alert("Could not completely remove the employee records. The employee was kept so you can retry.");
+      setDeletingId(null);
+      return;
+    }
+    setEmployees(current => current.filter(employee => employee.id !== id));
     setConfirmRemoveId(null);
-    
-    // Deep cleanup
-    const allLogs = await storage.get("timelogs") || [];
-    await Promise.all(allLogs.filter(l => l.employeeId === id).map(l => storage.remove("timelogs", l.id)));
-    const allLeaves = await storage.get("leaves") || [];
-    await Promise.all(allLeaves.filter(l => l.employeeId === id).map(l => storage.remove("leaves", l.id)));
-    const allAdvances = await storage.get("advances") || [];
-    await Promise.all(allAdvances.filter(a => a.employeeId === id).map(a => storage.remove("advances", a.id)));
+    setDeletingId(null);
   };
 
   const edit = (emp) => {
     setConfirmRemoveId(null);
     setForm({
-      name: emp.name, pin: emp.pin, employmentType: emp.employmentType || "Full-time", hourlyRate: emp.hourlyRate || "", 
-      dailySalary: emp.dailySalary || "", standardHours: emp.standardHours || "10", role: emp.role, 
+      name: emp.name, pin: emp.pin, employmentType: emp.employmentType || "Full-time", hourlyRate: canViewSalary ? (emp.hourlyRate || "") : "",
+      dailySalary: canViewSalary ? (emp.dailySalary || "") : "", standardHours: emp.standardHours || "10", role: emp.role,
       branch: emp.branch || branches[0] || "",
-      paymentCycle: emp.paymentCycle || "Weekly",
+      paymentCycle: canViewSalary ? (emp.paymentCycle || "Weekly") : "Weekly",
       phone: emp.phone || "", email: emp.email || "",
       gender: emp.gender || "", address: emp.address || ""
     });
@@ -2607,7 +2817,7 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
             {label:"Per Day Salary (₹)", key:"dailySalary", type:"number", ph:"e.g. 500"},
             {label:"Hourly Rate (₹)", key:"hourlyRate",type:"number", ph:"e.g. 11.50"},
             {label:"Role",          key:"role",       type:"text",   ph:"e.g. Sales Executive"},
-          ].map(f => (
+          ].filter(f => canViewSalary || !["dailySalary", "hourlyRate"].includes(f.key)).map(f => (
             <div key={f.key} style={{marginBottom:12}}>
               <label className="field-label">{f.label}</label>
               {f.type === "select" ? (
@@ -2634,13 +2844,13 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
                 {branches.map(b => <option key={b} value={b}>{b}</option>)}
               </select>
             </div>
-            <div>
+            {canViewSalary && <div>
               <label className="field-label">Payment Cycle</label>
               <select className="input" value={form.paymentCycle} onChange={e => setForm(p=>({...p,paymentCycle:e.target.value}))}>
                 <option value="Weekly">Weekly</option>
                 <option value="Monthly">Monthly</option>
               </select>
-            </div>
+            </div>}
           </div>
           <div style={{borderTop:"1px solid var(--border)", margin:"16px 0", paddingTop:16}}>
             <h4 style={{fontSize:14,color:"var(--text-2)",marginBottom:12}}>Profile Details (Optional)</h4>
@@ -2671,7 +2881,9 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
             </div>
           </div>
           {err && <p style={{color:"var(--danger)",fontSize:13,marginBottom:12,padding:"8px 12px",background:"var(--danger-bg)",borderRadius:7}}>{err}</p>}
-          <button className="btn btn-gold" style={{width:"100%"}} onClick={save}>Save Employee</button>
+          <button className="btn btn-gold" style={{width:"100%"}} disabled={saving} onClick={save}>
+            {saving ? "Saving…" : "Save Employee"}
+          </button>
         </div>
       )}
 
@@ -2686,7 +2898,10 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
               }}><User size={20} /></div>
               <div style={{minWidth:0}}>
                 <div style={{fontWeight:600}}>{emp.name}</div>
-                <div style={{fontSize:12,color:"var(--muted)"}}>{emp.role} {emp.branch ? `· ${emp.branch}` : ""} · {emp.employmentType || "Full-time"} · {emp.paymentCycle || "Weekly"} · PIN: {emp.pin} · ₹{emp.dailySalary||0}/day (₹{emp.hourlyRate||0}/hr)</div>
+                <div style={{fontSize:12,color:"var(--muted)"}}>
+                  {emp.role} {emp.branch ? `· ${emp.branch}` : ""} · {emp.employmentType || "Full-time"} · PIN: {emp.pin}
+                  {canViewSalary ? ` · ${emp.paymentCycle || "Weekly"} · ₹${emp.dailySalary || 0}/day (₹${emp.hourlyRate || 0}/hr)` : ""}
+                </div>
                 {(emp.phone || emp.email || emp.gender || emp.address) && (
                   <div style={{fontSize:11,color:"var(--text-2)",marginTop:4,display:"flex",gap:10,flexWrap:"wrap"}}>
                     {emp.phone && <span><Phone size={12}/> {emp.phone}</span>}
@@ -2699,14 +2914,16 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
             </div>
             <div className="mobile-full" style={{display:"flex", gap:8,flexWrap:"wrap",justifyContent:"flex-end"}}>
               <button className="btn btn-outline btn-sm" onClick={() => edit(emp)}>Edit</button>
-              {confirmRemoveId === emp.id ? (
+              {canDeleteStaff && (confirmRemoveId === emp.id ? (
                 <>
-                  <button className="btn btn-danger btn-sm" onClick={() => remove(emp.id)}>Confirm Remove</button>
-                  <button className="btn btn-ghost btn-sm" onClick={() => setConfirmRemoveId(null)}>Cancel</button>
+                  <button className="btn btn-danger btn-sm" disabled={deletingId === emp.id} onClick={() => remove(emp.id)}>
+                    {deletingId === emp.id ? "Removing…" : "Delete Staff & Records"}
+                  </button>
+                  <button className="btn btn-ghost btn-sm" disabled={deletingId === emp.id} onClick={() => setConfirmRemoveId(null)}>Cancel</button>
                 </>
               ) : (
                 <button className="btn btn-danger btn-sm" onClick={() => setConfirmRemoveId(emp.id)}>Remove</button>
-              )}
+              ))}
             </div>
           </div>
         ))}
@@ -2721,35 +2938,98 @@ export function AppClient() {
   const [sessionReady, setSessionReady] = useState(false);
 
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem("amigos_session");
-      setSession(saved ? JSON.parse(saved) : null);
-    } catch {
-      setSession(null);
-    } finally {
-      setSessionReady(true);
-    }
+    void (async () => {
+      try {
+        const response = await fetch("/api/auth/session", { cache: "no-store" });
+        if (response.ok) {
+          const staffSession = await response.json();
+          setSession({ role: staffSession.role, employee: null });
+          return;
+        }
+        const saved = localStorage.getItem("amigos_employee_session");
+        const employeeSession = saved ? JSON.parse(saved) : null;
+        const employeeSessionIsActive =
+          employeeSession?.role === "employee" &&
+          employeeSession?.employee &&
+          Number.isFinite(employeeSession.lastActivityAt) &&
+          Date.now() - employeeSession.lastActivityAt < SESSION_IDLE_TIMEOUT_MS;
+        if (employeeSessionIsActive) {
+          const safeEmployeeSession = {
+            ...employeeSession,
+            employee: employeePortalProfile(employeeSession.employee),
+          };
+          localStorage.setItem("amigos_employee_session", JSON.stringify(safeEmployeeSession));
+          setSession(safeEmployeeSession);
+        } else {
+          setSession(null);
+        }
+        localStorage.removeItem("amigos_session");
+      } catch {
+        setSession(null);
+      } finally {
+        setSessionReady(true);
+      }
+    })();
   }, []);
 
   const handleLogin = (role, emp) => {
-    const s = { role, employee: emp };
+    const s = {
+      role,
+      employee: role === "employee" ? employeePortalProfile(emp) : emp,
+      ...(role === "employee" ? { lastActivityAt: Date.now() } : {}),
+    };
     setSession(s);
-    localStorage.setItem("amigos_session", JSON.stringify(s));
+    if (role === "employee") {
+      localStorage.setItem("amigos_employee_session", JSON.stringify(s));
+    }
   };
 
   const handleLogout = useCallback(() => {
-    setSession(null); // Clear the user session
-    localStorage.removeItem("amigos_session"); // Remove session from local storage
+    setSession(null);
+    localStorage.removeItem("amigos_employee_session");
+    void fetch("/api/auth/logout", {
+      method: "POST",
+      keepalive: true,
+    }).catch(() => {
+      // The local session is already cleared; a transient network failure
+      // should not surface as an unhandled browser error.
+    });
   }, []);
 
   useEffect(() => {
     if (!session) return;
     let timeoutId;
+    let lastRefreshAt = Date.now();
     const resetTimer = () => {
       clearTimeout(timeoutId);
       timeoutId = setTimeout(() => {
         handleLogout();
-      }, 5 * 60 * 1000); // 5 minutes
+      }, SESSION_IDLE_TIMEOUT_MS);
+
+      const activityAt = Date.now();
+      if (activityAt - lastRefreshAt < SESSION_REFRESH_INTERVAL_MS) return;
+      lastRefreshAt = activityAt;
+
+      if (session.role === "employee") {
+        const saved = localStorage.getItem("amigos_employee_session");
+        const employeeSession = saved ? JSON.parse(saved) : null;
+        if (employeeSession?.role === "employee") {
+          localStorage.setItem(
+            "amigos_employee_session",
+            JSON.stringify({...employeeSession,lastActivityAt:activityAt}),
+          );
+        }
+        return;
+      }
+
+      void fetch("/api/auth/session", {
+        method: "POST",
+        keepalive: true,
+      }).then(response => {
+        if (!response.ok) handleLogout();
+      }).catch(() => {
+        // A temporary refresh failure should not interrupt an active session.
+      });
     };
 
     resetTimer();
@@ -2764,7 +3044,7 @@ export function AppClient() {
   const handleUpdateEmployee = (updatedEmp) => {
     const s = { ...session, employee: updatedEmp };
     setSession(s);
-    localStorage.setItem("amigos_session", JSON.stringify(s));
+    localStorage.setItem("amigos_employee_session", JSON.stringify(s));
   };
 
   if (!sessionReady) {
@@ -2776,9 +3056,27 @@ export function AppClient() {
     );
   }
 
+  if (session && !isFirebaseConfigured) {
+    return (
+      <main className="route-state">
+        <section className="state-card" role="alert">
+          <p className="eyebrow">Firebase setup required</p>
+          <h1>Connect the new Firestore project</h1>
+          <p>
+            Add all six NEXT_PUBLIC_FIREBASE_* values to .env, then restart the
+            Next.js server.
+          </p>
+          <button className="route-action" onClick={handleLogout}>
+            Sign out
+          </button>
+        </section>
+      </main>
+    );
+  }
+
   return !session
     ? <LoginScreen onLogin={handleLogin} />
     : session.role === "employee"
       ? <EmployeeView employee={session.employee} onLogout={handleLogout} onUpdateEmployee={handleUpdateEmployee} />
-      : <OwnerDashboard onLogout={handleLogout} />;
+      : <OwnerDashboard role={session.role} onLogout={handleLogout} />;
 }

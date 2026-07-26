@@ -1,3 +1,5 @@
+import "server-only";
+
 import { getApp, getApps, initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 
@@ -10,16 +12,8 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
-const missingFirebaseVariables = Object.entries(firebaseConfig)
-  .filter(([, value]) => !value)
-  .map(([key]) => key);
+const isConfigured = Object.values(firebaseConfig).every(Boolean);
 
-export const isFirebaseConfigured = missingFirebaseVariables.length === 0;
-
-export const firebaseApp = isFirebaseConfigured
-  ? getApps().length
-    ? getApp()
-    : initializeApp(firebaseConfig)
+export const serverDb = isConfigured
+  ? getFirestore(getApps().length ? getApp() : initializeApp(firebaseConfig))
   : null;
-
-export const db = firebaseApp ? getFirestore(firebaseApp) : null;

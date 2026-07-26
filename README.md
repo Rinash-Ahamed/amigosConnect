@@ -35,8 +35,18 @@ Firebase Firestore project.
    NEXT_PUBLIC_FIREBASE_APP_ID=
    ```
 
-   These values initialize the Firebase client SDK. Do not add Firebase Admin
-   credentials or other server secrets to `NEXT_PUBLIC_` variables.
+   Also configure the server-only development login override and session secret:
+
+   ```dotenv
+   DEV_PASSWORD=
+   AUTH_SECRET=
+   ```
+
+   `DEV_PASSWORD` can log into either staff role only while running `next dev`.
+   Use it to create the initial Owner and Manager passwords from each role's
+   Account screen. The role passwords are stored as salted hashes in
+   `amigos_store/staffAuth` in Firestore. Use a long random value for
+   `AUTH_SECRET`. Neither server-only value may use a `NEXT_PUBLIC_` prefix.
 
 3. Start development:
 
@@ -86,8 +96,10 @@ src/
 ```
 
 The route and layout are Server Components. `AppClient` is the browser boundary
-because the application uses local session storage, Firestore subscriptions,
-timers, install prompts, and interactive forms.
+because the application uses employee session storage, Firestore subscriptions,
+timers, install prompts, and interactive forms. Owner and Manager passwords are
+validated by API routes against salted hashes in Firestore, and staff sessions
+use signed HTTP-only cookies.
 
 ## Data compatibility
 
@@ -99,7 +111,7 @@ The existing Firestore collections and document structures are preserved:
 - `advances`
 - `branches`
 - `amigos_store/appSettings`
-- `amigos_store/ownerPass`
+- `amigos_store/staffAuth`
 
 The app starts with empty Firestore collections and contains no old-project
 migration, age-based retention, or automatic record deletion paths. Firebase
@@ -116,11 +128,15 @@ registration so stale caches do not interfere with local work.
 
 - The application currently applies India Standard Time (UTC+05:30) to automatic
   clock-out behavior.
-- Owner and employee sessions remain client-side and automatically expire after
-  five minutes of inactivity.
-- PIN/password behavior is preserved for compatibility. Review the Firestore
-  security rules and migrate clear-text credentials before exposing the system
-  beyond its current trusted deployment model.
+- Owner has payroll, salary advance, salary-field, export, and settings access.
+- Manager can manage attendance, leave, and staff profiles but salary-sensitive
+  navigation and values are excluded.
+- Owner, Manager, and Employee sessions terminate after 15 minutes without
+  keyboard, pointer, scroll, or touch activity. Active staff sessions renew
+  their signed HTTP-only cookie periodically.
+- Employee PIN behavior is preserved for compatibility. Review the Firestore
+  security rules before exposing the system beyond its current trusted
+  deployment model.
 - `firebase.json` points to the checked-in `firebase_rules` and empty
   `firestore.indexes.json` files. Create a new Firebase project, add its web-app
   values to `.env.local`, select the project with the Firebase CLI, and review
