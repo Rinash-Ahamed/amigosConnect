@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { readStaffSession, STAFF_SESSION_COOKIE } from "@/lib/auth/session";
-import { updateStaffPassword } from "@/lib/auth/staff-credentials";
+import {
+  resetStaffPassword,
+  updateStaffPassword,
+} from "@/lib/auth/staff-credentials";
 
 export async function POST(request: NextRequest) {
   const session = readStaffSession(
@@ -22,12 +25,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid request." }, { status: 400 });
   }
 
-  if (
-    typeof body.currentPassword !== "string" ||
-    typeof body.newPassword !== "string"
-  ) {
+  if (typeof body.newPassword !== "string") {
     return NextResponse.json(
-      { error: "Current and new passwords are required." },
+      { error: "A new password is required." },
       { status: 400 },
     );
   }
@@ -51,11 +51,29 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const ownerResettingManager =
+    session.role === "owner" && targetRole === "manager";
+
+  if (
+    !ownerResettingManager &&
+    typeof body.currentPassword !== "string"
+  ) {
+    return NextResponse.json(
+      { error: "The current password is required." },
+      { status: 400 },
+    );
+  }
+
   try {
+    if (ownerResettingManager) {
+      await resetStaffPassword(targetRole, body.newPassword);
+      return NextResponse.json({ success: true });
+    }
+
     const updated = await updateStaffPassword(
       session.role,
       targetRole,
-      body.currentPassword,
+      body.currentPassword as string,
       body.newPassword,
     );
     if (!updated) {

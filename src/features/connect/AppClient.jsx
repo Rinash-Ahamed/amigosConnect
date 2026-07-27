@@ -2420,7 +2420,9 @@ function OwnerDashboard({ role, onLogout }) {
             <form className="card" onSubmit={changeStaffPassword}>
               <h4 style={{fontSize:16,marginBottom:6}}>Change Password</h4>
               <p style={{color:"var(--muted)",fontSize:13,marginBottom:16}}>
-                The new password is securely hashed and saved to Firestore.
+                {isOwner && passwordTarget === "manager"
+                  ? "Set a new Manager password. The current Manager password is not required."
+                  : "The new password is securely hashed and saved to Firestore."}
               </p>
               {isOwner && (
                 <>
@@ -2443,7 +2445,11 @@ function OwnerDashboard({ role, onLogout }) {
                 </>
               )}
               {[
-                {key:"currentPassword",id:"current-staff-password",label:isOwner ? "Current owner password" : "Current manager password",autoComplete:"current-password"},
+                ...(
+                  isOwner && passwordTarget === "manager"
+                    ? []
+                    : [{key:"currentPassword",id:"current-staff-password",label:isOwner ? "Current owner password" : "Current manager password",autoComplete:"current-password"}]
+                ),
                 {key:"newPassword",id:"new-staff-password",label:"New password",autoComplete:"new-password"},
                 {key:"confirmPassword",id:"confirm-staff-password",label:"Confirm new password",autoComplete:"new-password"},
               ].map(field => {

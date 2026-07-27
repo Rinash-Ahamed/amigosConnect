@@ -92,3 +92,17 @@ export async function updateStaffPassword(
   );
   return true;
 }
+
+export async function resetStaffPassword(
+  targetRole: StaffRole,
+  newPassword: string,
+) {
+  if (!serverDb) {
+    throw new Error("Firestore is not configured.");
+  }
+  await setDoc(
+    doc(serverDb, ...STAFF_AUTH_DOCUMENT),
+    { [targetRole]: hashPassword(newPassword) },
+    { merge: true },
+  );
+}
