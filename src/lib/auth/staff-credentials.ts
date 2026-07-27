@@ -73,21 +73,36 @@ export async function verifyStaffPassword(
 }
 
 export async function updateStaffPassword(
-  role: StaffRole,
+  currentRole: StaffRole,
+  targetRole: StaffRole,
   currentPassword: string,
   newPassword: string,
 ) {
   const credentials = await readStaffAuth();
   const currentMatches =
     matchesDevelopmentPassword(currentPassword) ||
-    matchesCredential(currentPassword, credentials[role]);
+    matchesCredential(currentPassword, credentials[currentRole]);
 
   if (!currentMatches) return false;
 
   await setDoc(
     doc(serverDb!, ...STAFF_AUTH_DOCUMENT),
-    { [role]: hashPassword(newPassword) },
+    { [targetRole]: hashPassword(newPassword) },
     { merge: true },
   );
   return true;
+}
+
+export async function resetStaffPassword(
+  targetRole: StaffRole,
+  newPassword: string,
+) {
+  if (!serverDb) {
+    throw new Error("Firestore is not configured.");
+  }
+  await setDoc(
+    doc(serverDb, ...STAFF_AUTH_DOCUMENT),
+    { [targetRole]: hashPassword(newPassword) },
+    { merge: true },
+  );
 }
