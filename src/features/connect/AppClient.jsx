@@ -1323,6 +1323,7 @@ function OwnerDashboard({ role, onLogout }) {
     newPassword: "",
     confirmPassword: "",
   });
+  const [passwordTarget, setPasswordTarget] = useState(role);
   const [passwordSaving, setPasswordSaving] = useState(false);
   const [passwordMessage, setPasswordMessage] = useState("");
   const [passwordError, setPasswordError] = useState("");
@@ -1597,6 +1598,7 @@ function OwnerDashboard({ role, onLogout }) {
         body: JSON.stringify({
           currentPassword: passwordForm.currentPassword,
           newPassword: passwordForm.newPassword,
+          targetRole: passwordTarget,
         }),
       });
       const result = await response.json();
@@ -1614,7 +1616,7 @@ function OwnerDashboard({ role, onLogout }) {
         newPassword: false,
         confirmPassword: false,
       });
-      setPasswordMessage(`${isOwner ? "Owner" : "Manager"} password updated in Firestore.`);
+      setPasswordMessage(`${passwordTarget === "owner" ? "Owner" : "Manager"} password updated in Firestore.`);
     } catch {
       setPasswordError("Could not reach the password service. Try again.");
     } finally {
@@ -2418,10 +2420,30 @@ function OwnerDashboard({ role, onLogout }) {
             <form className="card" onSubmit={changeStaffPassword}>
               <h4 style={{fontSize:16,marginBottom:6}}>Change Password</h4>
               <p style={{color:"var(--muted)",fontSize:13,marginBottom:16}}>
-                Your new password is securely hashed and saved to Firestore.
+                The new password is securely hashed and saved to Firestore.
               </p>
+              {isOwner && (
+                <>
+                  <label className="field-label" htmlFor="password-target">Account</label>
+                  <select
+                    id="password-target"
+                    className="input"
+                    value={passwordTarget}
+                    onChange={event => {
+                      setPasswordTarget(event.target.value);
+                      setPasswordForm({currentPassword:"",newPassword:"",confirmPassword:""});
+                      setPasswordError("");
+                      setPasswordMessage("");
+                    }}
+                    style={{marginBottom:12}}
+                  >
+                    <option value="owner">Owner</option>
+                    <option value="manager">Manager</option>
+                  </select>
+                </>
+              )}
               {[
-                {key:"currentPassword",id:"current-staff-password",label:"Current password",autoComplete:"current-password"},
+                {key:"currentPassword",id:"current-staff-password",label:isOwner ? "Current owner password" : "Current manager password",autoComplete:"current-password"},
                 {key:"newPassword",id:"new-staff-password",label:"New password",autoComplete:"new-password"},
                 {key:"confirmPassword",id:"confirm-staff-password",label:"Confirm new password",autoComplete:"new-password"},
               ].map(field => {

@@ -11,7 +11,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Your session has expired." }, { status: 401 });
   }
 
-  let body: { currentPassword?: unknown; newPassword?: unknown };
+  let body: {
+    currentPassword?: unknown;
+    newPassword?: unknown;
+    targetRole?: unknown;
+  };
   try {
     body = (await request.json()) as typeof body;
   } catch {
@@ -35,9 +39,22 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const targetRole =
+    body.targetRole === "owner" || body.targetRole === "manager"
+      ? body.targetRole
+      : session.role;
+
+  if (session.role !== "owner" && targetRole !== session.role) {
+    return NextResponse.json(
+      { error: "Only the Owner can change another role's password." },
+      { status: 403 },
+    );
+  }
+
   try {
     const updated = await updateStaffPassword(
       session.role,
+      targetRole,
       body.currentPassword,
       body.newPassword,
     );
