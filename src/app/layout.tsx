@@ -33,6 +33,11 @@ export const metadata: Metadata = {
     ],
     apple: "/fashion-logo.png",
   },
+  appleWebApp: {
+    capable: true,
+    title: "AMIGOS Connect",
+    statusBarStyle: "black-translucent",
+  },
 };
 
 export const viewport: Viewport = {

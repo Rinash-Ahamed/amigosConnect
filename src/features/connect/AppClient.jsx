@@ -578,7 +578,12 @@ function LoginScreen({ onLogin }) {
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    const isAppleMobile = /iphone|ipad|ipod/i.test(window.navigator.userAgent);
+    const isIPadOS =
+      /macintosh/i.test(window.navigator.userAgent) &&
+      window.navigator.maxTouchPoints > 1;
+    const isAppleMobile =
+      /iphone|ipad|ipod/i.test(window.navigator.userAgent) ||
+      isIPadOS;
     const isMobile =
       window.navigator.userAgentData?.mobile === true ||
       /android|iphone|ipad|ipod|mobile/i.test(window.navigator.userAgent) ||
@@ -774,7 +779,7 @@ function LoginScreen({ onLogin }) {
       {isIOS && !isStandalone && !mode && (
         <div className="fade-up" style={{position:"absolute", bottom: 24, textAlign:"center", padding:"0 20px", width:"100%", pointerEvents:"none"}}>
           <div style={{background:"var(--card)", border:"1px solid var(--border)", borderRadius:12, padding:"10px 16px", display:"inline-block", color:"var(--muted)", fontSize:12, boxShadow:"0 4px 12px rgba(0,0,0,0.2)"}}>
-            To install on iPhone: tap <b style={{color:"var(--text)"}}>Share</b> then <b style={{color:"var(--text)"}}>Add to Home Screen</b> <span style={{fontSize:14}}>+</span>
+            To install on iPhone or iPad: tap <b style={{color:"var(--text)"}}>Share</b> then <b style={{color:"var(--text)"}}>Add to Home Screen</b> <span style={{fontSize:14}}>+</span>
           </div>
         </div>
       )}
