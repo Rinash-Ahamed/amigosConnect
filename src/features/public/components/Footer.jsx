@@ -97,9 +97,13 @@ const css = `
 .footer__bottom {
   border-top: 1px solid #1a1a1a;
   padding-top: 32px;
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  justify-content: space-between;
+  gap: 24px;
+}
+.footer__bottom .footer__copy:last-child {
+  justify-self: end;
 }
 .footer__copy {
   font-family: 'Space Mono', monospace;
@@ -115,7 +119,12 @@ const css = `
 @media (max-width: 768px) {
   .footer { padding: 60px 24px 32px; }
   .footer__top { grid-template-columns: 1fr; gap: 40px; }
-  .footer__bottom { flex-direction: column; gap: 16px; text-align: center; }
+  .footer__bottom {
+    grid-template-columns: 1fr;
+    gap: 16px;
+    text-align: center;
+  }
+  .footer__bottom .footer__copy:last-child { justify-self: center; }
 }
 `
 

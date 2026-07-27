@@ -146,7 +146,6 @@ export default function StoreLocation() {
             className="store__video"
             autoPlay
             muted
-            defaultMuted
             loop
             playsInline
             poster="https://images.unsplash.com/photo-1567401893414-76b7b1e5a7a5?w=1200&q=80&fit=crop"

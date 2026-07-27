@@ -1,10 +1,9 @@
-const CACHE_NAME = 'amigos-fashion-connect-v1';
+const CACHE_NAME = 'amigos-fashion-connect-v2';
 const URLS_TO_CACHE = [
   '/',
   '/connect',
   '/fashion-favicon.svg',
-  '/fashion-logo.png',
-  '/logo.png'
+  '/fashion-logo.png'
 ];
 
 self.addEventListener('install', (event) => {
