@@ -19,18 +19,19 @@ const playfair = Playfair_Display({
 
 export const metadata: Metadata = {
   title: {
-    default: "AMIGOS Connect",
-    template: "%s | AMIGOS Connect",
+    default: "AMIGOS Fashion",
+    template: "%s | AMIGOS Fashion",
   },
-  description: "Staff management, attendance, leave, advances, and payroll.",
-  applicationName: "AMIGOS Connect",
+  description:
+    "Curated fashion collections for men, women, and kids at AMIGOS Fashion.",
+  applicationName: "AMIGOS Fashion",
   manifest: "/manifest.webmanifest",
   icons: {
     icon: [
-      { url: "/favicon.ico" },
-      { url: "/logo.png", type: "image/png" },
+      { url: "/fashion-favicon.svg", type: "image/svg+xml" },
+      { url: "/fashion-logo.png", type: "image/png" },
     ],
-    apple: "/logo.png",
+    apple: "/fashion-logo.png",
   },
 };
 

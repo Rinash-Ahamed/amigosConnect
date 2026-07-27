@@ -53,6 +53,16 @@ svg {
   color: #e9ecf3;
 }
 
+.connect-site {
+  min-height: 100svh;
+  font-family: var(--font-sans), Inter, system-ui, sans-serif;
+}
+
+.connect-site .state-card h1 {
+  font-family: inherit;
+  letter-spacing: -0.015em;
+}
+
 .state-card {
   width: min(100%, 520px);
   padding: clamp(24px, 6vw, 42px);

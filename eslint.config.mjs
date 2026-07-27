@@ -12,7 +12,10 @@ export default defineConfig([
     "next-env.d.ts",
   ]),
   {
-    files: ["src/features/app/AppClient.jsx"],
+    files: [
+      "src/features/connect/AppClient.jsx",
+      "src/features/public/**/*.jsx",
+    ],
     rules: {
       "@next/next/no-img-element": "off",
     },

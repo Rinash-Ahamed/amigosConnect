@@ -149,11 +149,11 @@ const to24Hour = (hour12, period) => {
 
 // ── Utilities ──
 const fmt = (iso) => {
-  if (!iso) return "—";
+  if (!iso) return "-";
   return new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
 };
 const fmtDate = (iso) => {
-  if (!iso) return "—";
+  if (!iso) return "-";
   return new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 };
 const hoursWorked = (clockIn, clockOut, breaks = []) => {
@@ -295,7 +295,7 @@ const GlobalStyle = () => (
     body {
       background: var(--bg);
       color: var(--text);
-    font-family: 'Inter', sans-serif;
+      font-family: var(--font-sans), Inter, system-ui, sans-serif;
     font-variant-numeric: tabular-nums;
       font-size: 15px;
       line-height: 1.6;
@@ -303,13 +303,18 @@ const GlobalStyle = () => (
       overflow-x: hidden;
     }
 
-    h1,h2,h3,h4 { font-family: 'Playfair Display', serif; letter-spacing: 0.01em; }
+    h1,h2,h3,h4 {
+      font-family: var(--font-sans), Inter, system-ui, sans-serif;
+      letter-spacing: -0.015em;
+    }
 
     ::-webkit-scrollbar { width: 4px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 4px; }
 
-    input, select, textarea { font-family: 'Inter', sans-serif; }
+    input, select, textarea {
+      font-family: var(--font-sans), Inter, system-ui, sans-serif;
+    }
 
     @keyframes fadeUp {
       from { opacity: 0; transform: translateY(16px); }
@@ -364,7 +369,7 @@ const GlobalStyle = () => (
     .btn {
       display: inline-flex; align-items: center; justify-content: center; gap: 7px;
       padding: 11px 22px; border-radius: 10px; border: none; cursor: pointer;
-      font-family: 'Inter', sans-serif; font-size: 14px; font-weight: 500;
+      font-family: var(--font-sans), Inter, system-ui, sans-serif; font-size: 14px; font-weight: 500;
       transition: all .18s ease; white-space: nowrap; letter-spacing: .01em;
     }
     .btn-gold {
@@ -541,7 +546,7 @@ function PinPad({ value, onChange, maxLen = EMPLOYEE_PIN_LENGTH }) {
               opacity: k==="" ? 0 : 1,
               pointerEvents: k==="" ? "none":"auto",
               borderRadius:11,
-              fontFamily:"'Inter',sans-serif",
+              fontFamily:"var(--font-sans), Inter, system-ui, sans-serif",
               fontWeight: k==="⌫" ? 400 : 500,
             }}
             onClick={() => {
@@ -564,7 +569,7 @@ function LoginScreen({ onLogin }) {
   const [pass, setPass] = useState("");
   const [employees, setEmployees] = useState([]);
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [employeesLoading, setEmployeesLoading] = useState(true);
   const [installPrompt, setInstallPrompt] = useState(null);
   const [isIOS, setIsIOS] = useState(false);
   const [isStandalone, setIsStandalone] = useState(false);
@@ -594,7 +599,7 @@ function LoginScreen({ onLogin }) {
     (async () => {
       if (!isFirebaseConfigured) {
         setEmployees([]);
-        setLoading(false);
+        setEmployeesLoading(false);
         return;
       }
       let emps = await storage.get("employees");
@@ -603,7 +608,7 @@ function LoginScreen({ onLogin }) {
         emps = [];
       }
       setEmployees(Array.isArray(emps) ? emps : []);
-      setLoading(false);
+      setEmployeesLoading(false);
     })();
   }, []);
 
@@ -650,13 +655,6 @@ function LoginScreen({ onLogin }) {
     }
   };
 
-  if (loading) return (
-    <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:"var(--bg)"}}>
-      <GlobalStyle />
-      <div style={{width:28,height:28,border:"2px solid var(--border-2)",borderTopColor:"var(--gold)",borderRadius:"50%",animation:"spin 1s linear infinite"}}/>
-    </div>
-  );
-
   return (
     <div style={{
       minHeight:"100vh", display:"flex", flexDirection:"column",
@@ -677,7 +675,7 @@ function LoginScreen({ onLogin }) {
           overflow:"hidden", animation: "logo-pulse 3s ease-in-out infinite",
           perspective: 1000
         }}>
-          <img src="/logo.png" alt="Amigos" fetchPriority="high" decoding="async" style={{width:"100%",height:"100%",objectFit:"cover", borderRadius: "50%", animation: "logo-flip 4.5s ease-in-out infinite"}} />
+          <img src="/fashion-logo.png" alt="Amigos" fetchPriority="high" decoding="async" style={{width:"100%",height:"100%",objectFit:"cover", borderRadius: "50%", animation: "logo-flip 4.5s ease-in-out infinite"}} />
         </div>
         <h1 style={{fontSize:30, color:"var(--gold)", marginBottom:4, letterSpacing:"0.05em"}}>AMIGOS Connect</h1>
         <p style={{color:"var(--muted)", fontSize:12, letterSpacing:"0.18em", textTransform:"uppercase", fontWeight:500}}>Staff & Manager Portal</p>
@@ -686,9 +684,9 @@ function LoginScreen({ onLogin }) {
       {!mode ? (
         <div className="fade-up" style={{width:"100%",maxWidth:320,display:"flex",flexDirection:"column",gap:12}}>
           <button className="btn btn-gold" style={{padding:"17px",fontSize:15,borderRadius:13,width:"100%"}}
-            disabled={!isFirebaseConfigured}
+            disabled={!isFirebaseConfigured || employeesLoading}
             onClick={() => { setMode("employee"); setError(""); }}>
-            <User size={18} /> Employee Login
+            <User size={18} /> {employeesLoading ? "Loading Staff..." : "Employee Login"}
           </button>
           {!isFirebaseConfigured && (
             <p style={{color:"var(--amber)",fontSize:12,textAlign:"center",lineHeight:1.5}}>
@@ -1034,7 +1032,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
         {[{id:"home",label:"Dashboard"}, ...(settings.leavesEnabled !== false ? [{id:"leave",label:"Leave Requests"}] : []), {id:"advance",label:"Advance"}, {id:"profile",label:"Profile"}].map(t => (
           <button key={t.id} onClick={() => setView(t.id)} aria-current={view === t.id ? "page" : undefined} style={{
             flexShrink: 0, padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",
-            fontSize:13,fontWeight:500,fontFamily:"'Inter',sans-serif",
+            fontSize:13,fontWeight:500,fontFamily:"var(--font-sans), Inter, system-ui, sans-serif",
             background: view===t.id ? "var(--gold)" : "transparent",
             color: view===t.id ? "#080b10" : "var(--muted)",
             transition:"all .18s"
@@ -1059,7 +1057,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
               <p style={{color:"var(--muted)",fontSize:12,letterSpacing:".1em",textTransform:"uppercase",marginBottom:6}}>
                 {new Date().toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long"})}
               </p>
-              <div style={{fontSize:52,fontFamily:"'Playfair Display',serif",fontWeight:500,color:"var(--text)",marginBottom:4,letterSpacing:"-0.02em"}}>
+              <div style={{fontSize:52,fontFamily:"var(--font-sans), Inter, system-ui, sans-serif",fontWeight:600,color:"var(--text)",marginBottom:4,letterSpacing:"-0.03em"}}>
                 {now.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit",second:"2-digit", hour12: true})}
               </div>
               {active && (
@@ -1067,7 +1065,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
                   <p style={{color:"var(--muted)",fontSize:12,marginBottom:4}}>
                     Shift started <strong style={{color:"var(--text-2)"}}>{fmtDate(active.clockIn)} {fmt(active.clockIn)}</strong>
                   </p>
-                  <p style={{fontSize:30,color:"var(--success)",fontWeight:600,fontFamily:"'Playfair Display',serif",letterSpacing:"0.05em"}}>
+                  <p style={{fontSize:30,color:"var(--success)",fontWeight:600,fontFamily:"var(--font-sans), Inter, system-ui, sans-serif",letterSpacing:"0.02em"}}>
                     {elapsedStr}
                   </p>
                 </div>
@@ -1089,7 +1087,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
             <div className="card" style={{display:"flex",alignItems:"center",gap:16,marginBottom:18}}>
               <div style={{color:"var(--gold)"}}><Calendar size={36} /></div>
               <div>
-                <div style={{fontSize:26,fontWeight:700,color:"var(--gold)",fontFamily:"'Playfair Display',serif"}}>{hrs.toFixed(1)} hrs</div>
+                <div style={{fontSize:26,fontWeight:700,color:"var(--gold)",fontFamily:"var(--font-sans), Inter, system-ui, sans-serif"}}>{hrs.toFixed(1)} hrs</div>
                 <div style={{fontSize:13,color:"var(--muted)",fontWeight:500}}>Worked This Week</div>
               </div>
             </div>
@@ -1275,7 +1273,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
               <div key={a.id} className="card" style={{marginBottom:10}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
                   <div>
-                    <p style={{fontWeight:700,fontSize:18,color:"var(--gold)",fontFamily:"'Playfair Display',serif"}}>₹{a.amount}</p>
+                    <p style={{fontWeight:700,fontSize:18,color:"var(--gold)",fontFamily:"var(--font-sans), Inter, system-ui, sans-serif"}}>₹{a.amount}</p>
                     <p style={{fontSize:12,color:"var(--muted)",marginTop:2}}>{a.reason}</p>
                   </div>
                   <span className={`tag ${advanceStatusColor(a.status)}`} style={{textTransform:"capitalize"}}>{a.status}</span>
@@ -1706,7 +1704,7 @@ function OwnerDashboard({ role, onLogout }) {
     timesheetEmployees.forEach(emp => {
       getTsLogs(emp.id).forEach(l => {
         const h = hoursWorked(l.clockIn, l.clockOut, l.breaks);
-        rows.push([emp.name, emp.branch || "—", fmtDate(l.clockIn), fmt(l.clockIn), l.clockOut ? fmt(l.clockOut) : "Open", h.toFixed(2)]);
+        rows.push([emp.name, emp.branch || "-", fmtDate(l.clockIn), fmt(l.clockIn), l.clockOut ? fmt(l.clockOut) : "Open", h.toFixed(2)]);
       });
     });
     const timestamp = new Date().toISOString().slice(0,19).replace(/:/g, "-");
@@ -1732,7 +1730,7 @@ function OwnerDashboard({ role, onLogout }) {
 
     rows.push([
       emp.name, 
-      emp.branch || "—", 
+      emp.branch || "-", 
       emp.paymentCycle || "Weekly", 
       payroll.daysWorked, 
       emp.standardHours || 10,
@@ -1757,12 +1755,12 @@ function OwnerDashboard({ role, onLogout }) {
       const emp = fEmployees.find(e => e.id === a.employeeId);
       rows.push([
         emp ? emp.name : "Unknown",
-        emp ? (emp.branch || "—") : "—",
+        emp ? (emp.branch || "-") : "-",
         a.amount,
         a.reason || "",
         a.status,
         fmtDate(a.appliedAt),
-        a.paidAt ? fmtDate(a.paidAt) : (a.status === 'paid' ? fmtDate(a.appliedAt) : "—")
+        a.paidAt ? fmtDate(a.paidAt) : (a.status === 'paid' ? fmtDate(a.appliedAt) : "-")
       ]);
     });
     const timestamp = new Date().toISOString().slice(0,19).replace(/:/g, "-");
@@ -1869,7 +1867,7 @@ function OwnerDashboard({ role, onLogout }) {
             display:"flex",alignItems:"center",justifyContent:"center",
             overflow:"hidden"
           }}>
-            <img src="/logo.png" alt="" loading="lazy" decoding="async" style={{width:"100%",height:"100%",objectFit:"cover", borderRadius: "50%"}}/>
+            <img src="/fashion-logo.png" alt="" loading="lazy" decoding="async" style={{width:"100%",height:"100%",objectFit:"cover", borderRadius: "50%"}}/>
           </div>
           <div>
             <h2 style={{fontSize:16,color:"var(--gold)",lineHeight:1.1,letterSpacing:"0.04em",whiteSpace:"nowrap"}}>AMIGOS Connect</h2>
@@ -1912,7 +1910,7 @@ function OwnerDashboard({ role, onLogout }) {
         {tabs.map(t => (
           <button key={t.id} onClick={() => setTab(t.id)} aria-current={tab === t.id ? "page" : undefined} style={{
             flexShrink: 0, padding:"8px 14px",borderRadius:"8px 8px 0 0",border:"none",cursor:"pointer",
-            fontSize:13,fontFamily:"'Inter',sans-serif",fontWeight:500,whiteSpace:"nowrap",
+            fontSize:13,fontFamily:"var(--font-sans), Inter, system-ui, sans-serif",fontWeight:500,whiteSpace:"nowrap",
             background: tab===t.id ? "var(--card)" : "transparent",
             color: tab===t.id ? "var(--gold)" : "var(--muted)",
             borderTop: tab===t.id ? "1px solid var(--gold-dim)" : "1px solid transparent",
@@ -1963,7 +1961,7 @@ function OwnerDashboard({ role, onLogout }) {
               ].map(s => (
                 <div key={s.label} className="card" style={{flex:"1 1 145px",position:"relative",overflow:"hidden"}}>
                   <div style={{color:s.color, marginBottom:8}}>{s.icon}</div>
-                  <div style={{fontSize:26,fontWeight:700,color:s.color,fontFamily:"'Playfair Display',serif",marginBottom:2}}>{s.value}</div>
+                  <div style={{fontSize:26,fontWeight:700,color:s.color,fontFamily:"var(--font-sans), Inter, system-ui, sans-serif",marginBottom:2}}>{s.value}</div>
                   <div style={{fontSize:12,color:"var(--muted)",fontWeight:500}}>{s.label}</div>
                   <div style={{position:"absolute",bottom:-10,right:-10,opacity:.04, transform:"scale(3)"}}>{s.icon}</div>
                 </div>
@@ -1991,7 +1989,7 @@ function OwnerDashboard({ role, onLogout }) {
                 )}
               </div>
               <div style={{
-                fontSize:20,fontFamily:"'Playfair Display',serif",color:"var(--text-2)",
+                fontSize:20,fontFamily:"var(--font-sans), Inter, system-ui, sans-serif",color:"var(--text-2)",
                 background:"var(--card)",border:"1px solid var(--border)",
                 borderRadius:10,padding:"6px 16px",letterSpacing:"0.04em"
               }}>
@@ -2035,7 +2033,7 @@ function OwnerDashboard({ role, onLogout }) {
                       </div>
                     </div>
                     <div className="mobile-left" style={{textAlign:"right",flex:"1 1 150px"}}>
-                      <div style={{fontSize:26,fontFamily:"'Playfair Display',serif",color:"var(--success)",fontWeight:600,letterSpacing:"0.05em"}}>{eStr}</div>
+                      <div style={{fontSize:26,fontFamily:"var(--font-sans), Inter, system-ui, sans-serif",color:"var(--success)",fontWeight:600,letterSpacing:"0.02em"}}>{eStr}</div>
                       {isOwner && <div style={{fontSize:12,color:"var(--muted)", marginBottom: 8}}>₹{((hrs) * (emp?.hourlyRate || 0)).toFixed(2)} earned</div>}
                       <button className="btn btn-outline btn-xs" onClick={() => clockOutSingle(sess.id, sess.name)}>
                         <StopCircle size={12} style={{marginRight: 2}}/> Clock Out
@@ -2158,7 +2156,7 @@ function OwnerDashboard({ role, onLogout }) {
                           <span style={{fontWeight:500}}>{fmt(l.clockIn)} → {l.clockOut ? fmt(l.clockOut) : <span style={{color:"var(--success)"}}>Active</span>}</span>
                         </div>
                         <div className="mobile-left" style={{display:"flex", alignItems:"center", gap:12, marginLeft:"auto",flexWrap:"wrap"}}>
-                          <span style={{color:"var(--gold)", fontWeight:600}}>{l.clockOut ? `${hoursWorked(l.clockIn,l.clockOut,l.breaks).toFixed(1)}h` : "—"}</span>
+                          <span style={{color:"var(--gold)", fontWeight:600}}>{l.clockOut ? `${hoursWorked(l.clockIn,l.clockOut,l.breaks).toFixed(1)}h` : "-"}</span>
                           <button className="btn btn-danger btn-xs" onClick={() => deleteLog(l.id)}><X size={12}/></button>
                         </div>
                       </div>
@@ -2225,7 +2223,7 @@ function OwnerDashboard({ role, onLogout }) {
                     </div>
                     <div className="mobile-left" style={{flex:"0 1 auto", marginLeft:"auto", minWidth:"140px", textAlign:"right"}}>
                       <div style={{fontSize:13,color:"var(--muted)",fontWeight:500,marginBottom:4}}>Gross: ₹{gross.toFixed(2)}</div>
-                      <div style={{fontSize:26,fontFamily:"'Playfair Display',serif",color:"var(--gold)",fontWeight:700,lineHeight:1}}>₹{net.toFixed(2)}</div>
+                      <div style={{fontSize:26,fontFamily:"var(--font-sans), Inter, system-ui, sans-serif",color:"var(--gold)",fontWeight:700,lineHeight:1}}>₹{net.toFixed(2)}</div>
                       {advance > 0 && <div style={{fontSize:12,color:"var(--danger)",fontWeight:500,marginTop:4}}>Advances: -₹{advance.toFixed(2)}</div>}
                       {payroll.totalHours === 0 && advance === 0 && <div style={{fontSize:12,color:"var(--muted)",marginTop:4}}>No shifts</div>}
                     </div>
@@ -2241,7 +2239,7 @@ function OwnerDashboard({ role, onLogout }) {
               </div>
               <div className="mobile-left" style={{flex:"0 1 auto", marginLeft:"auto", textAlign:"right"}}>
                 <div style={{fontSize:14,color:"var(--muted)",fontWeight:500,marginBottom:6}}>Gross: ₹{totalPrGross.toFixed(2)} {totalPrAdvance > 0 && <span style={{color:"var(--danger)"}}>| Adv: -₹{totalPrAdvance.toFixed(2)}</span>}</div>
-                <div style={{fontSize:36,fontFamily:"'Playfair Display',serif",color:"var(--gold)",fontWeight:700,lineHeight:1}}>₹{totalPrPay.toFixed(2)}</div>
+                <div style={{fontSize:36,fontFamily:"var(--font-sans), Inter, system-ui, sans-serif",color:"var(--gold)",fontWeight:700,lineHeight:1}}>₹{totalPrPay.toFixed(2)}</div>
               </div>
             </div>
           </div>
@@ -2358,7 +2356,7 @@ function OwnerDashboard({ role, onLogout }) {
                   }}>
                     <div style={{textAlign:"left",flex:"1 1 220px",minWidth:0}}>
                       <p style={{fontWeight:600,fontSize:15}}>{a.name}</p>
-                      <p style={{fontSize:20,color:"var(--gold)",marginTop:2, fontFamily:"'Playfair Display',serif", fontWeight:700}}>₹{a.amount}</p>
+                      <p style={{fontSize:20,color:"var(--gold)",marginTop:2, fontFamily:"var(--font-sans), Inter, system-ui, sans-serif", fontWeight:700}}>₹{a.amount}</p>
                       <p style={{fontSize:12,color:"var(--muted)",marginTop:4}}>{a.reason}</p>
                       <p style={{fontSize:11,color:"var(--text-2)",marginTop:4}}>Requested {fmtDate(a.appliedAt)}</p>
                     </div>
@@ -2857,6 +2855,27 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
   );
 }
 
+let pendingStaffSessionCheck = null;
+
+function checkStaffSession() {
+  if (!pendingStaffSessionCheck) {
+    pendingStaffSessionCheck = fetch("/api/auth/session", {
+      cache: "no-store",
+    })
+      .then(async response => {
+        if (!response.ok) return null;
+        const session = await response.json();
+        return session?.role === "owner" || session?.role === "manager"
+          ? session
+          : null;
+      })
+      .finally(() => {
+        pendingStaffSessionCheck = null;
+      });
+  }
+  return pendingStaffSessionCheck;
+}
+
 // ── Root ──
 export function AppClient() {
   const [session, setSession] = useState(null);
@@ -2865,9 +2884,8 @@ export function AppClient() {
   useEffect(() => {
     void (async () => {
       try {
-        const response = await fetch("/api/auth/session", { cache: "no-store" });
-        if (response.ok) {
-          const staffSession = await response.json();
+        const staffSession = await checkStaffSession();
+        if (staffSession) {
           setSession({ role: staffSession.role, employee: null });
           return;
         }

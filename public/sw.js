@@ -1,11 +1,11 @@
-const CACHE_NAME = 'amigos-connect-v7';
+const CACHE_NAME = 'amigos-fashion-connect-v2';
 const URLS_TO_CACHE = [
   '/',
-  '/favicon.ico',
-  '/logo.png'
+  '/connect',
+  '/fashion-favicon.svg',
+  '/fashion-logo.png'
 ];
 
-// Install the service worker and cache assets
 self.addEventListener('install', (event) => {
   self.skipWaiting();
   event.waitUntil(
@@ -14,34 +14,51 @@ self.addEventListener('install', (event) => {
   );
 });
 
-// Clean up old caches when the new service worker activates
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
+    Promise.all([
+      self.clients.claim(),
+      caches.keys().then((cacheNames) => (
+        Promise.all(
         cacheNames.map((cacheName) => {
           if (cacheName !== CACHE_NAME) {
             return caches.delete(cacheName);
           }
         })
-      );
-    })
+        )
+      ))
+    ])
   );
 });
 
-// Network-first for App Router navigations, cache-first for static assets.
 self.addEventListener('fetch', (event) => {
+  if (event.request.method !== 'GET') return;
+
   if (event.request.mode === 'navigate') {
     event.respondWith(
       fetch(event.request)
         .then((response) => {
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put('/', copy));
+          if (response.ok) {
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+          }
           return response;
         })
-        .catch(() => caches.match('/'))
+        .catch(async () => {
+          const cachedPage = await caches.match(event.request);
+          if (cachedPage) return cachedPage;
+
+          const pathname = new URL(event.request.url).pathname;
+          return caches.match(pathname.startsWith('/connect') ? '/connect' : '/');
+        })
     );
-  } else {
-    event.respondWith(caches.match(event.request).then((response) => response || fetch(event.request)));
+    return;
   }
+
+  const url = new URL(event.request.url);
+  if (url.origin !== self.location.origin) return;
+
+  event.respondWith(
+    caches.match(event.request).then((response) => response || fetch(event.request))
+  );
 });
