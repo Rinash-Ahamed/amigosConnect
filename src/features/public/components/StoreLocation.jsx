@@ -95,18 +95,20 @@ const css = `
   align-items: center;
   gap: 12px;
   padding: 16px 36px;
-  background: #f5f0eb;
-  color: #080808;
+  border: 1px solid #f5f0eb;
+  background: transparent;
+  color: #f5f0eb;
   font-family: 'Space Mono', monospace;
   font-size: 11px;
   letter-spacing: 0.15em;
   text-transform: uppercase;
   text-decoration: none;
-  transition: background 0.3s, gap 0.3s;
+  transition: background 0.3s, color 0.3s, gap 0.3s;
   cursor: none;
 }
 .store__cta:hover {
-  background: #e8ddd0;
+  background: #f5f0eb;
+  color: #080808;
   gap: 18px;
 }
 

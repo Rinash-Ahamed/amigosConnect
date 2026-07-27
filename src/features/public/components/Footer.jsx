@@ -194,6 +194,7 @@ export default function Footer() {
         </div>
         <div className="footer__bottom">
           <span className="footer__copy">© 2026 AMIGOS Fashion - All rights reserved</span>
+          <span className="footer__copy">Version {process.env.NEXT_PUBLIC_APP_VERSION}</span>
           <span className="footer__copy">Made in India 🇮🇳</span>
         </div>
       </footer>

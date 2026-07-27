@@ -85,9 +85,9 @@ const css = `
   justify-content: center;
   min-height: 38px;
   padding: 0 18px;
-  border: 1px solid rgba(245, 240, 235, 0.7);
-  background: #f5f0eb;
-  color: #080808;
+  border: 1px solid #f5f0eb;
+  background: transparent;
+  color: #f5f0eb;
   font-family: 'Space Mono', monospace;
   font-size: 9px;
   font-weight: 700;
@@ -96,8 +96,8 @@ const css = `
   transition: background 0.3s ease, color 0.3s ease;
 }
 .nav .nav__connect:hover {
-  background: transparent;
-  color: #f5f0eb;
+  background: #f5f0eb;
+  color: #080808;
 }
 .nav__tag {
   font-family: 'Space Mono', monospace;

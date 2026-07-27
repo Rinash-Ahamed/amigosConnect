@@ -90,8 +90,9 @@ const css = `
   align-items: center;
   gap: 12px;
   padding: 18px 40px;
-  background: #f5f0eb;
-  color: #080808;
+  border: 1px solid #f5f0eb;
+  background: transparent;
+  color: #f5f0eb;
   font-family: 'Space Mono', monospace;
   font-size: 11px;
   letter-spacing: 0.15em;
@@ -100,7 +101,8 @@ const css = `
   cursor: none;
 }
 .editorial__cta:hover {
-  background: #e8ddd0;
+  background: #f5f0eb;
+  color: #080808;
   gap: 20px;
 }
 .editorial__stats {
