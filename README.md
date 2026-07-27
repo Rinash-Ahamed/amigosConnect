@@ -1,9 +1,13 @@
-# AMIGOS Connect
+# AMIGOS Fashion + Connect
 
-AMIGOS Connect is a production-oriented Next.js PWA for staff management,
-attendance, leave requests, salary advances, and payroll reporting. It has an
-owner/manager dashboard and a PIN-based employee portal backed by the existing
-Firebase Firestore project.
+This repository hosts both the public AMIGOS Fashion website and the private
+AMIGOS Connect staff-management portal in one production-oriented Next.js
+application.
+
+- `/` is the public fashion website.
+- `/collections`, `/about`, `/size-guide`, and `/contact` are public pages.
+- `/connect` is the Owner, Manager, and employee portal.
+- `/api/*` contains server-only authentication and backend endpoints.
 
 ## Technology
 
@@ -11,6 +15,7 @@ Firebase Firestore project.
 - React 19
 - TypeScript with strict checking for TypeScript modules
 - Firebase Firestore
+- GSAP and Lenis for public-site motion and smooth scrolling
 - Recharts
 - Lucide React
 - ESLint with the Next.js Core Web Vitals and TypeScript rules
@@ -54,7 +59,8 @@ Firebase Firestore project.
    npm run dev
    ```
 
-4. Open <http://localhost:3000>.
+4. Open <http://localhost:3000> for the public website or
+   <http://localhost:3000/connect> for the Connect portal.
 
 ## Production
 
@@ -72,31 +78,28 @@ The production server uses port 3000 by default.
 ```text
 src/
 ├── app/
-│   ├── error.tsx
+│   ├── (public)/             # Public website routes and metadata
+│   ├── connect/              # Connect portal route
+│   ├── api/                  # Server-only authentication endpoints
 │   ├── layout.tsx
-│   ├── loading.tsx
-│   ├── manifest.ts
-│   ├── not-found.tsx
-│   └── page.tsx
+│   └── manifest.ts
 ├── components/
 │   └── pwa/
 │       └── ServiceWorkerRegistration.tsx
 ├── features/
-│   └── app/
-│       └── AppClient.jsx
+│   ├── public/               # Public pages, components, hooks, and styles
+│   └── connect/
+│       └── AppClient.jsx     # Staff-management application
 ├── lib/
-│   └── firebase/
-│       └── client.ts
-├── services/
-│   └── storage.ts
-├── styles/
+│   ├── auth/                 # Session and staff credential services
+│   └── firebase/             # Client and Admin Firestore initialization
+└── styles/
 │   └── globals.css
-└── types/
-    └── domain.ts
 ```
 
-The route and layout are Server Components. `AppClient` is the browser boundary
-because the application uses employee session storage, Firestore subscriptions,
+Public routes use a dedicated layout so their fashion design and animations do
+not leak into the Connect interface. `AppClient` is the Connect browser boundary
+because that portal uses employee session storage, Firestore subscriptions,
 timers, install prompts, and interactive forms. Owner and Manager passwords are
 validated by API routes against salted hashes in Firestore, and staff sessions
 use signed HTTP-only cookies.

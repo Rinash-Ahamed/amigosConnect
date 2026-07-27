@@ -5,7 +5,7 @@ export default function manifest(): MetadataRoute.Manifest {
     name: "AMIGOS Connect",
     short_name: "AMIGOS",
     description: "Staff management, attendance, leave, advances, and payroll.",
-    start_url: "/",
+    start_url: "/connect",
     display: "standalone",
     background_color: "#080b10",
     theme_color: "#080b10",
