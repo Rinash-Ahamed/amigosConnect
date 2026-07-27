@@ -12,5 +12,5 @@ export const metadata: Metadata = {
 };
 
 export default function ConnectPage() {
-  return <AppClient />;
+  return <div className="connect-site"><AppClient /></div>;
 }

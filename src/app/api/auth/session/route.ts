@@ -8,12 +8,15 @@ import {
   STAFF_SESSION_TTL_SECONDS,
 } from "@/lib/auth/session";
 
-function refreshSession(request: NextRequest) {
+function refreshSession(request: NextRequest, unauthenticatedStatus = 401) {
   const session = readStaffSession(
     request.cookies.get(STAFF_SESSION_COOKIE)?.value,
   );
   if (!session) {
-    return NextResponse.json({ role: null }, { status: 401 });
+    return NextResponse.json(
+      { role: null },
+      { status: unauthenticatedStatus },
+    );
   }
 
   const response = NextResponse.json({ role: session.role });
@@ -28,7 +31,9 @@ function refreshSession(request: NextRequest) {
 }
 
 export async function GET(request: NextRequest) {
-  return refreshSession(request);
+  // An initial session lookup without a cookie is an expected logged-out state,
+  // not an authentication failure.
+  return refreshSession(request, 200);
 }
 
 export async function POST(request: NextRequest) {
