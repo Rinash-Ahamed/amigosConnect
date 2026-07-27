@@ -572,12 +572,20 @@ function LoginScreen({ onLogin }) {
   const [employeesLoading, setEmployeesLoading] = useState(true);
   const [installPrompt, setInstallPrompt] = useState(null);
   const [isIOS, setIsIOS] = useState(false);
+  const [isMobileDevice, setIsMobileDevice] = useState(false);
   const [isStandalone, setIsStandalone] = useState(false);
   const [showPass, setShowPass] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    setIsIOS(/iphone|ipad|ipod/i.test(window.navigator.userAgent));
+    const isAppleMobile = /iphone|ipad|ipod/i.test(window.navigator.userAgent);
+    const isMobile =
+      window.navigator.userAgentData?.mobile === true ||
+      /android|iphone|ipad|ipod|mobile/i.test(window.navigator.userAgent) ||
+      (window.navigator.maxTouchPoints > 1 && window.innerWidth <= 1024);
+
+    setIsIOS(isAppleMobile);
+    setIsMobileDevice(isMobile);
     setIsStandalone(
       window.matchMedia("(display-mode: standalone)").matches ||
       window.navigator.standalone === true,
@@ -754,7 +762,7 @@ function LoginScreen({ onLogin }) {
       )}
 
       {/* Manual Install Button for Android/Mac */}
-      {installPrompt && !mode && !isIOS && (
+      {installPrompt && isMobileDevice && !mode && !isIOS && (
         <div className="fade-up" style={{position:"absolute", bottom: 30}}>
           <button className="btn btn-outline btn-sm" style={{background:"var(--card)", color:"var(--gold)", border:"1px solid var(--gold-dim)"}} onClick={handleInstall}>
             <Download size={14}/> Install Amigos App
