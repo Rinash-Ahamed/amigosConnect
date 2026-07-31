@@ -28,9 +28,10 @@ export async function POST(request: Request) {
   }
 
   const role: StaffRole = body.role;
+  const roleLabel = role === "owner" ? "Owner" : "Manager";
   if (!process.env.AUTH_SECRET) {
     return NextResponse.json(
-      { error: "Staff login is not configured." },
+      { error: `${roleLabel} login is not configured.` },
       { status: 503 },
     );
   }
@@ -39,9 +40,11 @@ export async function POST(request: Request) {
   try {
     passwordMatches = await verifyStaffPassword(role, body.password);
   } catch (error) {
-    console.error("Staff credential lookup failed:", error);
+    console.error(`${roleLabel} credential lookup failed:`, error);
     return NextResponse.json(
-      { error: "Could not access staff login credentials." },
+      {
+        error: `${roleLabel} login is temporarily unavailable. Please try again.`,
+      },
       { status: 503 },
     );
   }

@@ -40,6 +40,15 @@ application.
    NEXT_PUBLIC_FIREBASE_APP_ID=
    ```
 
+   Add the server-only Firestore Admin credentials from a Firebase service
+   account. Keep the private key on one line with escaped newlines:
+
+   ```dotenv
+   FIREBASE_PROJECT_ID=
+   FIREBASE_CLIENT_EMAIL=
+   FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n"
+   ```
+
    Also configure the server-only development login override and session secret:
 
    ```dotenv
@@ -50,7 +59,8 @@ application.
    `DEV_PASSWORD` can log into either staff role only while running `next dev`.
    Use it to create the initial Owner and Manager passwords from each role's
    Account screen. The role passwords are stored as salted hashes in
-   `amigos_store/staffAuth` in Firestore. Use a long random value for
+   separate `amigos_store/ownerAuth` and `amigos_store/managerAuth` documents
+   in Firestore. Use a long random value for
    `AUTH_SECRET`. Neither server-only value may use a `NEXT_PUBLIC_` prefix.
 
 3. Start development:
@@ -91,7 +101,7 @@ src/
 │   └── connect/
 │       └── AppClient.jsx     # Staff-management application
 ├── lib/
-│   ├── auth/                 # Session and staff credential services
+│   ├── auth/                 # Session and role credential services
 │   └── firebase/             # Client and Admin Firestore initialization
 └── styles/
 │   └── globals.css
@@ -114,7 +124,8 @@ The existing Firestore collections and document structures are preserved:
 - `advances`
 - `branches`
 - `amigos_store/appSettings`
-- `amigos_store/staffAuth`
+- `amigos_store/ownerAuth`
+- `amigos_store/managerAuth`
 
 The app starts with empty Firestore collections and contains no old-project
 migration, age-based retention, or automatic record deletion paths. Firebase

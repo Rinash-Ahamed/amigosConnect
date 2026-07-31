@@ -1,19 +1,37 @@
 import "server-only";
 
-import { getApp, getApps, initializeApp } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
+import {
+  cert,
+  getApp,
+  getApps,
+  initializeApp,
+  type App,
+} from "firebase-admin/app";
+import { getFirestore, type Firestore } from "firebase-admin/firestore";
 
-const firebaseConfig = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
-};
+const ADMIN_APP_NAME = "amigos-connect-admin";
+const projectId = process.env.FIREBASE_PROJECT_ID;
+const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n");
 
-const isConfigured = Object.values(firebaseConfig).every(Boolean);
+export const isServerFirestoreConfigured = Boolean(
+  projectId && clientEmail && privateKey,
+);
 
-export const serverDb = isConfigured
-  ? getFirestore(getApps().length ? getApp() : initializeApp(firebaseConfig))
+function getAdminApp(): App | null {
+  if (!isServerFirestoreConfigured) return null;
+  const existingApp = getApps().find(app => app.name === ADMIN_APP_NAME);
+  return existingApp ?? initializeApp(
+    {
+      credential: cert({ projectId, clientEmail, privateKey }),
+      projectId,
+    },
+    ADMIN_APP_NAME,
+  );
+}
+
+const adminApp = getAdminApp();
+
+export const serverDb: Firestore | null = adminApp
+  ? getFirestore(getApp(ADMIN_APP_NAME))
   : null;
