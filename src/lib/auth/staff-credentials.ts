@@ -5,7 +5,6 @@ import {
   scryptSync,
   timingSafeEqual,
 } from "node:crypto";
-import { doc, getDoc, setDoc } from "firebase/firestore";
 
 import { serverDb } from "@/lib/firebase/server";
 import type { StaffRole } from "@/lib/auth/session";
@@ -16,12 +15,10 @@ interface StoredCredential {
   updatedAt: string;
 }
 
-interface StaffAuthDocument {
-  owner?: StoredCredential;
-  manager?: StoredCredential;
-}
-
-const STAFF_AUTH_DOCUMENT = ["amigos_store", "staffAuth"] as const;
+const AUTH_DOCUMENTS: Record<StaffRole, string> = {
+  owner: "amigos_store/ownerAuth",
+  manager: "amigos_store/managerAuth",
+};
 
 function safeEqual(received: string, expected: string) {
   const receivedBuffer = Buffer.from(received);
@@ -55,12 +52,12 @@ function matchesDevelopmentPassword(password: string) {
   );
 }
 
-async function readStaffAuth(): Promise<StaffAuthDocument> {
+async function readRoleCredential(role: StaffRole): Promise<StoredCredential | undefined> {
   if (!serverDb) {
-    throw new Error("Firestore is not configured.");
+    throw new Error("Firestore Admin credentials are not configured.");
   }
-  const snapshot = await getDoc(doc(serverDb, ...STAFF_AUTH_DOCUMENT));
-  return snapshot.exists() ? (snapshot.data() as StaffAuthDocument) : {};
+  const snapshot = await serverDb.doc(AUTH_DOCUMENTS[role]).get();
+  return snapshot.exists ? (snapshot.data() as StoredCredential) : undefined;
 }
 
 export async function verifyStaffPassword(
@@ -68,8 +65,8 @@ export async function verifyStaffPassword(
   password: string,
 ) {
   if (matchesDevelopmentPassword(password)) return true;
-  const credentials = await readStaffAuth();
-  return matchesCredential(password, credentials[role]);
+  const credential = await readRoleCredential(role);
+  return matchesCredential(password, credential);
 }
 
 export async function updateStaffPassword(
@@ -78,18 +75,14 @@ export async function updateStaffPassword(
   currentPassword: string,
   newPassword: string,
 ) {
-  const credentials = await readStaffAuth();
+  const currentCredential = await readRoleCredential(currentRole);
   const currentMatches =
     matchesDevelopmentPassword(currentPassword) ||
-    matchesCredential(currentPassword, credentials[currentRole]);
+    matchesCredential(currentPassword, currentCredential);
 
   if (!currentMatches) return false;
 
-  await setDoc(
-    doc(serverDb!, ...STAFF_AUTH_DOCUMENT),
-    { [targetRole]: hashPassword(newPassword) },
-    { merge: true },
-  );
+  await serverDb!.doc(AUTH_DOCUMENTS[targetRole]).set(hashPassword(newPassword));
   return true;
 }
 
@@ -98,11 +91,7 @@ export async function resetStaffPassword(
   newPassword: string,
 ) {
   if (!serverDb) {
-    throw new Error("Firestore is not configured.");
+    throw new Error("Firestore Admin credentials are not configured.");
   }
-  await setDoc(
-    doc(serverDb, ...STAFF_AUTH_DOCUMENT),
-    { [targetRole]: hashPassword(newPassword) },
-    { merge: true },
-  );
+  await serverDb.doc(AUTH_DOCUMENTS[targetRole]).set(hashPassword(newPassword));
 }

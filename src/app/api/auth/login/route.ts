@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { verifyStaffPassword } from "@/lib/auth/staff-credentials";
+import { isServerFirestoreConfigured } from "@/lib/firebase/server";
 import {
   createStaffSession,
   isSecureRequest,
@@ -28,9 +29,10 @@ export async function POST(request: Request) {
   }
 
   const role: StaffRole = body.role;
+  const roleLabel = role === "owner" ? "Owner" : "Manager";
   if (!process.env.AUTH_SECRET) {
     return NextResponse.json(
-      { error: "Staff login is not configured." },
+      { error: `${roleLabel} login is not configured.` },
       { status: 503 },
     );
   }
@@ -39,9 +41,13 @@ export async function POST(request: Request) {
   try {
     passwordMatches = await verifyStaffPassword(role, body.password);
   } catch (error) {
-    console.error("Staff credential lookup failed:", error);
+    console.error(`${roleLabel} credential lookup failed:`, error);
     return NextResponse.json(
-      { error: "Could not access staff login credentials." },
+      {
+        error: isServerFirestoreConfigured
+          ? `${roleLabel} login could not read its credentials from Firestore.`
+          : `${roleLabel} login needs FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, and FIREBASE_PRIVATE_KEY in .env.`,
+      },
       { status: 503 },
     );
   }

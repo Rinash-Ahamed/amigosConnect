@@ -570,6 +570,7 @@ function LoginScreen({ onLogin }) {
   const [employees, setEmployees] = useState([]);
   const [error, setError] = useState("");
   const [employeesLoading, setEmployeesLoading] = useState(true);
+  const [employeesError, setEmployeesError] = useState("");
   const [installPrompt, setInstallPrompt] = useState(null);
   const [isIOS, setIsIOS] = useState(false);
   const [isMobileDevice, setIsMobileDevice] = useState(false);
@@ -608,22 +609,45 @@ function LoginScreen({ onLogin }) {
     return () => window.removeEventListener('beforeinstallprompt', handleInstallPrompt);
   }, []);
 
-  useEffect(() => {
-    (async () => {
-      if (!isFirebaseConfigured) {
-        setEmployees([]);
-        setEmployeesLoading(false);
-        return;
-      }
-      let emps = await storage.get("employees");
-      if (emps === undefined) {
-        setError("Could not load staff data. Check your connection and try again.");
-        emps = [];
-      }
-      setEmployees(Array.isArray(emps) ? emps : []);
+  const loadEmployees = useCallback(async () => {
+    setEmployeesLoading(true);
+    setEmployeesError("");
+
+    if (!isFirebaseConfigured) {
+      setEmployees([]);
+      setEmployeesError("Employee login needs the public Firestore configuration.");
       setEmployeesLoading(false);
-    })();
+      return;
+    }
+
+    let timeoutId;
+    try {
+      const emps = await Promise.race([
+        storage.get("employees"),
+        new Promise((_, reject) => {
+          timeoutId = window.setTimeout(
+            () => reject(new Error("Employee lookup timed out.")),
+            6000,
+          );
+        }),
+      ]);
+
+      if (!Array.isArray(emps)) {
+        throw new Error("Employee data is unavailable.");
+      }
+      setEmployees(emps);
+    } catch {
+      setEmployees([]);
+      setEmployeesError("Staff data could not be loaded. Check Firestore and retry.");
+    } finally {
+      window.clearTimeout(timeoutId);
+      setEmployeesLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    void loadEmployees();
+  }, [loadEmployees]);
 
   const tryEmployeePin = useCallback((p) => {
     if (p.length < EMPLOYEE_PIN_LENGTH) return;
@@ -697,13 +721,23 @@ function LoginScreen({ onLogin }) {
       {!mode ? (
         <div className="fade-up" style={{width:"100%",maxWidth:320,display:"flex",flexDirection:"column",gap:12}}>
           <button className="btn btn-gold" style={{padding:"17px",fontSize:15,borderRadius:13,width:"100%"}}
-            disabled={!isFirebaseConfigured || employeesLoading}
+            disabled={!isFirebaseConfigured || employeesLoading || Boolean(employeesError) || employees.length === 0}
             onClick={() => { setMode("employee"); setError(""); }}>
-            <User size={18} /> {employeesLoading ? "Loading Staff..." : "Employee Login"}
+            <User size={18} /> {employeesLoading ? "Loading Staff..." : employees.length === 0 ? "No Staff Accounts" : "Employee Login"}
           </button>
-          {!isFirebaseConfigured && (
+          {!employeesLoading && employeesError && (
             <p style={{color:"var(--amber)",fontSize:12,textAlign:"center",lineHeight:1.5}}>
-              Employee login will be available after Firebase is configured.
+              {employeesError}
+            </p>
+          )}
+          {!employeesLoading && employeesError && isFirebaseConfigured && (
+            <button className="btn btn-ghost btn-sm" type="button" style={{width:"100%"}} onClick={loadEmployees}>
+              Retry Staff Load
+            </button>
+          )}
+          {!employeesLoading && !employeesError && employees.length === 0 && (
+            <p style={{color:"var(--muted)",fontSize:12,textAlign:"center",lineHeight:1.5}}>
+              Sign in as Owner and add a staff account first.
             </p>
           )}
           <button className="btn btn-outline" style={{padding:"17px",fontSize:15,borderRadius:13,width:"100%"}}
@@ -1841,31 +1875,31 @@ function OwnerDashboard({ role, onLogout }) {
     ...(isOwner ? [{id:"settings", label:"Settings", icon:<Settings size={14} />}] : []),
   ];
 
-  if (loading && error) {
-    return (
-      <main className="route-state">
-        <section className="state-card" role="alert">
-          <p className="eyebrow">Connection problem</p>
-          <h1>Dashboard data could not load</h1>
-          <p>{error}</p>
-          <button className="route-action" onClick={() => window.location.reload()}>
-            Retry
-          </button>
-        </section>
-      </main>
-    );
-  }
-
-  if (loading) return (
-    <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:"var(--bg)"}}>
-      <GlobalStyle/>
-      <div style={{width:28,height:28,border:"2px solid var(--border-2)",borderTopColor:"var(--gold)",borderRadius:"50%",animation:"spin 1s linear infinite"}}/>
-    </div>
-  );
-
   return (
     <div style={{minHeight:"100vh",background:"var(--bg)"}}>
       <GlobalStyle/>
+
+      {(loading || error) && (
+        <div
+          role={error ? "alert" : "status"}
+          style={{
+            position:"fixed",right:16,bottom:16,zIndex:1000,
+            display:"flex",alignItems:"center",gap:10,
+            maxWidth:360,padding:"10px 14px",borderRadius:10,
+            border:`1px solid ${error ? "rgba(224,85,85,.35)" : "var(--border-2)"}`,
+            background:"var(--card)",color:error ? "var(--danger)" : "var(--text-2)",
+            boxShadow:"0 10px 30px rgba(0,0,0,.35)",fontSize:12,
+          }}
+        >
+          {!error && <span style={{width:14,height:14,border:"2px solid var(--border-2)",borderTopColor:"var(--gold)",borderRadius:"50%",animation:"spin 1s linear infinite",flexShrink:0}}/>}
+          <span>{error || "Syncing dashboard data..."}</span>
+          {error && (
+            <button className="btn btn-outline btn-sm" onClick={() => window.location.reload()}>
+              Retry
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Top bar */}
       <div style={{

@@ -43,6 +43,7 @@ export async function POST(request: NextRequest) {
     body.targetRole === "owner" || body.targetRole === "manager"
       ? body.targetRole
       : session.role;
+  const targetRoleLabel = targetRole === "owner" ? "Owner" : "Manager";
 
   if (session.role !== "owner" && targetRole !== session.role) {
     return NextResponse.json(
@@ -84,9 +85,9 @@ export async function POST(request: NextRequest) {
     }
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("Staff password update failed:", error);
+    console.error(`${targetRoleLabel} password update failed:`, error);
     return NextResponse.json(
-      { error: "Could not update the password in Firestore." },
+      { error: `Could not update the ${targetRoleLabel} password in Firestore.` },
       { status: 503 },
     );
   }
