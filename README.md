@@ -101,7 +101,7 @@ src/
 │   └── connect/
 │       └── AppClient.jsx     # Staff-management application
 ├── lib/
-│   ├── auth/                 # Session and staff credential services
+│   ├── auth/                 # Session and role credential services
 │   └── firebase/             # Client and Admin Firestore initialization
 └── styles/
 │   └── globals.css
