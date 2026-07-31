@@ -7,7 +7,7 @@ import {
   Users, Settings, LayoutDashboard, Timer, Phone, Mail, MapPin, 
   Edit2, Trash2, Flag, Eye, EyeOff, ChevronLeft, ChevronRight
 } from "lucide-react";
-import { doc, getDoc, setDoc, collection, getDocs, deleteDoc, onSnapshot, query, where, writeBatch } from "firebase/firestore";
+import { doc, getDoc, setDoc, collection, getDocs, deleteDoc, onSnapshot } from "firebase/firestore";
 
 import { db, isFirebaseConfigured } from "@/lib/firebase/client";
 
@@ -79,31 +79,13 @@ const storage = {
     }
   },
   async removeEmployeeCascade(employeeId) {
-    if (!db) return false;
     try {
-      const relatedCollections = ["timelogs", "leaves", "advances"];
-      const relatedSnapshots = await Promise.all(
-        relatedCollections.map(key =>
-          getDocs(query(collection(db, key), where("employeeId", "==", employeeId)))
-        )
-      );
-      const documentRefs = relatedSnapshots.flatMap(snapshot =>
-        snapshot.docs.map(documentSnapshot => documentSnapshot.ref)
-      );
-
-      // Delete the employee document last. If a related-record batch fails,
-      // the employee remains visible so the Owner can safely retry.
-      documentRefs.push(doc(db, "employees", employeeId));
-      for (let index = 0; index < documentRefs.length; index += 500) {
-        const batch = writeBatch(db);
-        documentRefs.slice(index, index + 500).forEach(documentRef => {
-          batch.delete(documentRef);
-        });
-        await batch.commit();
-      }
-      return true;
+      const response = await fetch(`/api/employees/${encodeURIComponent(employeeId)}`, {
+        method: "DELETE",
+      });
+      return response.ok;
     } catch (e) {
-      console.error("Firebase employee cleanup error:", e);
+      console.error("Employee cleanup error:", e);
       return false;
     }
   },
@@ -615,7 +597,7 @@ function LoginScreen({ onLogin }) {
 
     if (!isFirebaseConfigured) {
       setEmployees([]);
-      setEmployeesError("Employee login needs the public Firestore configuration.");
+      setEmployeesError("Staff login is temporarily unavailable. Please try again.");
       setEmployeesLoading(false);
       return;
     }
@@ -638,7 +620,7 @@ function LoginScreen({ onLogin }) {
       setEmployees(emps);
     } catch {
       setEmployees([]);
-      setEmployeesError("Staff data could not be loaded. Check Firestore and retry.");
+      setEmployeesError("Staff login is temporarily unavailable. Please try again.");
     } finally {
       window.clearTimeout(timeoutId);
       setEmployeesLoading(false);
@@ -653,7 +635,7 @@ function LoginScreen({ onLogin }) {
     if (p.length < EMPLOYEE_PIN_LENGTH) return;
     const emp = employees.find(e => e.pin === p);
     if (emp) { setError(""); onLogin("employee", emp); }
-    else { setError("Incorrect PIN. Please try again."); setPin(""); }
+    else { setError("PIN not recognized. Check your PIN or contact the Owner."); setPin(""); }
   }, [employees, onLogin]);
 
   const handlePinChange = (nextPin) => {
@@ -737,7 +719,7 @@ function LoginScreen({ onLogin }) {
           )}
           {!employeesLoading && !employeesError && employees.length === 0 && (
             <p style={{color:"var(--muted)",fontSize:12,textAlign:"center",lineHeight:1.5}}>
-              Sign in as Owner and add a staff account first.
+              No staff accounts are available. Please contact the Owner.
             </p>
           )}
           <button className="btn btn-outline" style={{padding:"17px",fontSize:15,borderRadius:13,width:"100%"}}

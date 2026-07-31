@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 
 import { verifyStaffPassword } from "@/lib/auth/staff-credentials";
-import { isServerFirestoreConfigured } from "@/lib/firebase/server";
 import {
   createStaffSession,
   isSecureRequest,
@@ -44,9 +43,7 @@ export async function POST(request: Request) {
     console.error(`${roleLabel} credential lookup failed:`, error);
     return NextResponse.json(
       {
-        error: isServerFirestoreConfigured
-          ? `${roleLabel} login could not read its credentials from Firestore.`
-          : `${roleLabel} login needs FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, and FIREBASE_PRIVATE_KEY in .env.`,
+        error: `${roleLabel} login is temporarily unavailable. Please try again.`,
       },
       { status: 503 },
     );
