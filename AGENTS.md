@@ -30,7 +30,7 @@ See [README.md](README.md) for comprehensive feature documentation.
 - No TypeScript: Rely on JSDoc for type hints
 - Master password in cleartext: Use encryption for production
 - No automatic retention cleanup: historical records remain until explicitly removed
-- Firebase web config comes from the `NEXT_PUBLIC_FIREBASE_*` variables in `.env.local`
+- Firestore uses server-only Firebase Admin credentials; browser Firebase variables are not used
 
 ## Key Files
 - [src/App.jsx](src/App.jsx): Root component with all logic and components

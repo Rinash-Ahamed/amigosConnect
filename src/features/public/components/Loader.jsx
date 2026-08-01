@@ -90,13 +90,13 @@ export default function Loader({ onComplete }) {
   const [exiting, setExiting] = useState(false)
 
   useEffect(() => {
-    const total = 2200
+    const total = 1200
     const startTime = Date.now()
 
     const progressInterval = setInterval(() => {
       const elapsed = Date.now() - startTime
       setProgress(Math.min((elapsed / total) * 100, 100))
-    }, 30)
+    }, 60)
 
     const countInterval = setInterval(() => {
       setCount(prev => {
@@ -106,7 +106,7 @@ export default function Loader({ onComplete }) {
         }
         return prev - 1
       })
-    }, 400)
+    }, total / 5)
 
     const timer = setTimeout(() => {
       clearInterval(progressInterval)

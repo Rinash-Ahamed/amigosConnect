@@ -9,10 +9,12 @@ import {
 } from "firebase-admin/app";
 import { getFirestore, type Firestore } from "firebase-admin/firestore";
 
+import { normalizePrivateKey } from "./private-key";
+
 const ADMIN_APP_NAME = "amigos-connect-admin";
 const projectId = process.env.FIREBASE_PROJECT_ID;
 const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n");
+const privateKey = normalizePrivateKey(process.env.FIREBASE_PRIVATE_KEY);
 
 export const isServerFirestoreConfigured = Boolean(
   projectId && clientEmail && privateKey,
