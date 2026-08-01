@@ -1,6 +1,8 @@
 import React, { useRef, useEffect } from 'react'
 import { useInView } from '../hooks/useInView'
 
+const STORE_VIDEO_URL = 'https://videos.pexels.com/video-files/7679727/7679727-hd_1920_1080_30fps.mp4'
+
 const css = `
 .store {
   padding: 120px 48px;
@@ -130,10 +132,15 @@ export default function StoreLocation() {
   useEffect(() => {
     if (!videoRef.current) return;
 
-    // Explicitly force the DOM node to be muted (Required by Safari/iOS to allow autoplay)
+    // Explicitly force the DOM node to be muted for Safari/iOS autoplay.
     videoRef.current.defaultMuted = true;
     videoRef.current.muted = true;
-  }, []);
+    if (inView) {
+      void videoRef.current.play().catch(() => {
+        // The poster remains visible when a browser blocks autoplay.
+      });
+    }
+  }, [inView]);
 
   return (
     <>
@@ -142,12 +149,13 @@ export default function StoreLocation() {
         <div className="store__media">
           <video
             ref={videoRef}
-            src="https://videos.pexels.com/video-files/7679727/7679727-hd_1920_1080_30fps.mp4"
+            src={inView ? STORE_VIDEO_URL : undefined}
             className="store__video"
-            autoPlay
+            autoPlay={inView}
             muted
             loop
             playsInline
+            preload="none"
             poster="https://images.unsplash.com/photo-1567401893414-76b7b1e5a7a5?w=1200&q=80&fit=crop"
           ></video>
         </div>

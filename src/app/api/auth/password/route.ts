@@ -5,6 +5,7 @@ import {
   resetStaffPassword,
   updateStaffPassword,
 } from "@/lib/auth/staff-credentials";
+import { readJsonBody, RequestBodyError } from "@/lib/http/read-json";
 
 export async function POST(request: NextRequest) {
   const session = readStaffSession(
@@ -20,9 +21,10 @@ export async function POST(request: NextRequest) {
     targetRole?: unknown;
   };
   try {
-    body = (await request.json()) as typeof body;
-  } catch {
-    return NextResponse.json({ error: "Invalid request." }, { status: 400 });
+    body = await readJsonBody<typeof body>(request);
+  } catch (error) {
+    const status = error instanceof RequestBodyError ? error.status : 400;
+    return NextResponse.json({ error: "Invalid request." }, { status });
   }
 
   if (typeof body.newPassword !== "string") {
@@ -35,6 +37,13 @@ export async function POST(request: NextRequest) {
   if (body.newPassword.length < 8) {
     return NextResponse.json(
       { error: "The new password must be at least 8 characters." },
+      { status: 400 },
+    );
+  }
+
+  if (body.newPassword.length > 256) {
+    return NextResponse.json(
+      { error: "The new password is too long." },
       { status: 400 },
     );
   }
@@ -56,7 +65,9 @@ export async function POST(request: NextRequest) {
 
   if (
     !ownerResettingPassword &&
-    typeof body.currentPassword !== "string"
+    (typeof body.currentPassword !== "string" ||
+      body.currentPassword.length === 0 ||
+      body.currentPassword.length > 256)
   ) {
     return NextResponse.json(
       { error: "The current password is required." },

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'amigos-fashion-connect-v2';
+const CACHE_NAME = 'amigos-fashion-connect-v3';
 const URLS_TO_CACHE = [
   '/',
   '/connect',
@@ -10,7 +10,9 @@ self.addEventListener('install', (event) => {
   self.skipWaiting();
   event.waitUntil(
     caches.open(CACHE_NAME)
-      .then((cache) => cache.addAll(URLS_TO_CACHE))
+      .then((cache) => Promise.allSettled(
+        URLS_TO_CACHE.map((url) => cache.add(url))
+      ))
   );
 });
 

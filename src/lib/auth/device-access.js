@@ -12,7 +12,7 @@ export function normalizeAllowedDeviceIds(value) {
 export function isDeviceAllowed(allowedDeviceIds, deviceId) {
   const normalized = normalizeAllowedDeviceIds(allowedDeviceIds);
   if (normalized.length === 0) {
-    return true;
+    return false;
   }
   if (typeof deviceId !== "string") {
     return false;
