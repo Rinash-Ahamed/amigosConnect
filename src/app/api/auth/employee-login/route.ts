@@ -74,7 +74,9 @@ export async function POST(request: Request) {
     const documentSnapshot = snapshot.docs[0];
     const employeeData = documentSnapshot.data() as Record<string, unknown>;
     const deviceId = typeof body.deviceId === "string" ? body.deviceId.trim() : "";
-    const allowedDevices = normalizeAllowedDeviceIds(employeeData.allowedDeviceIds);
+    const settingsSnapshot = await serverDb.doc("amigos_store/appSettings").get();
+    const settingsData = (settingsSnapshot.exists ? settingsSnapshot.data()?.value ?? null : null) as Record<string, unknown> | null;
+    const allowedDevices = normalizeAllowedDeviceIds(settingsData?.deviceAllowlist);
     if (!isDeviceAllowed(allowedDevices, deviceId)) {
       return NextResponse.json(
         { error: "This device is not authorized for this employee account." },

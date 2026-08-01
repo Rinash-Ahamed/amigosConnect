@@ -633,14 +633,13 @@ function PinPad({ value, onChange, maxLen = EMPLOYEE_PIN_LENGTH }) {
 }
 
 // ── Login Screen ──
-function LoginScreen({ onLogin }) {
+function LoginScreen({ onLogin, deviceId, setDeviceId }) {
   const [mode, setMode] = useState(null);
   const [pin, setPin] = useState("");
   const [pass, setPass] = useState("");
   const [error, setError] = useState("");
   const [pinChecking, setPinChecking] = useState(false);
   const [installPrompt, setInstallPrompt] = useState(null);
-  const [deviceId, setDeviceId] = useState("");
   const [isIOS, setIsIOS] = useState(false);
   const [isMobileDevice, setIsMobileDevice] = useState(false);
   const [isStandalone, setIsStandalone] = useState(false);
@@ -779,11 +778,6 @@ function LoginScreen({ onLogin }) {
 
       {!mode ? (
         <div className="fade-up" style={{width:"100%",maxWidth:320,display:"flex",flexDirection:"column",gap:12}}>
-          {deviceId && (
-            <div style={{fontSize:11,color:"var(--muted)",textAlign:"center",wordBreak:"break-all",padding:"8px 10px",borderRadius:10,border:"1px solid var(--border)",background:"rgba(255,255,255,0.03)"}}>
-              Device ID: <span style={{fontWeight:600,color:"var(--text-2)"}}>{deviceId}</span>
-            </div>
-          )}
           <button className="btn btn-gold" style={{padding:"17px",fontSize:15,borderRadius:13,width:"100%"}}
             onClick={() => { setMode("employee"); setError(""); }}>
             <User size={18} /> Employee Login
@@ -1374,7 +1368,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
 }
 
 // ── Owner Dashboard ──
-function OwnerDashboard({ role, onLogout }) {
+function OwnerDashboard({ role, onLogout, deviceId }) {
   const isOwner = role === "owner";
   const [tab, setTab] = useState("overview");
 
@@ -1411,6 +1405,9 @@ function OwnerDashboard({ role, onLogout }) {
   const [passwordSaving, setPasswordSaving] = useState(false);
   const [passwordMessage, setPasswordMessage] = useState("");
   const [passwordError, setPasswordError] = useState("");
+  const [deviceAllowlistInput, setDeviceAllowlistInput] = useState(
+    normalizeAllowedDeviceIds(settings.deviceAllowlist).join("\n"),
+  );
   const [visiblePasswordFields, setVisiblePasswordFields] = useState({
     currentPassword: false,
     newPassword: false,
@@ -1418,20 +1415,37 @@ function OwnerDashboard({ role, onLogout }) {
   });
 
   useEffect(() => {
+    setDeviceAllowlistInput(normalizeAllowedDeviceIds(settings.deviceAllowlist).join("\n"));
+  }, [settings.deviceAllowlist]);
+
+  useEffect(() => {
     let currentSettings = defaultSettings();
     let loadedCount = 0;
+    let completed = false;
+    let timedOut = false;
+
+    const finishLoading = () => {
+      if (completed) return;
+      completed = true;
+      clearTimeout(timeout);
+      setLoading(false);
+      setError("");
+    };
+
     const timeout = setTimeout(() => {
+      timedOut = true;
       if (loadedCount < 5) {
         setError("Loading timed out. Check your connection and refresh the page.");
-        setLoading(false);
+        finishLoading();
       }
     }, 10000);
+
     const checkLoaded = () => {
+      if (timedOut || completed) return;
       if (loadedCount < 5) {
         loadedCount++;
         if (loadedCount === 5) {
-          clearTimeout(timeout);
-          setLoading(false);
+          finishLoading();
         }
       }
     };
@@ -1476,7 +1490,22 @@ function OwnerDashboard({ role, onLogout }) {
       checkLoaded();
     }
 
-    return () => unsubs.forEach(unsub => unsub());
+    const fallbackTimer = window.setTimeout(() => {
+      if (!completed) {
+        setEmployees([]);
+        setLogs([]);
+        setLeaves([]);
+        setAdvances([]);
+        setSettings(defaultSettings());
+        finishLoading();
+      }
+    }, 15000);
+
+    return () => {
+      clearTimeout(timeout);
+      clearTimeout(fallbackTimer);
+      unsubs.forEach(unsub => unsub());
+    };
   }, [isOwner]);
 
   const { tsStart, tsEnd } = useMemo(() => {
@@ -1686,6 +1715,14 @@ function OwnerDashboard({ role, onLogout }) {
     }
     setSettings(updated);
     return true;
+  };
+
+  const saveDeviceAllowlist = async () => {
+    const normalized = normalizeAllowedDeviceIds(deviceAllowlistInput);
+    const updated = await updateSettings({ deviceAllowlist: normalized });
+    if (!updated) {
+      alert("Could not save the device allowlist.");
+    }
   };
 
   const changeStaffPassword = async (event) => {
@@ -2540,6 +2577,28 @@ function OwnerDashboard({ role, onLogout }) {
             <h3 style={{fontSize:20,marginBottom:20,textAlign:"center"}}>
               {isOwner ? "Owner" : "Manager"} Account
             </h3>
+            {deviceId && (
+              <div style={{fontSize:11,color:"var(--muted)",textAlign:"center",wordBreak:"break-all",padding:"10px 12px",borderRadius:10,border:"1px solid var(--border)",background:"rgba(255,255,255,0.03)",marginBottom:12}}>
+                Current Device ID: <span style={{fontWeight:600,color:"var(--text-2)"}}>{deviceId}</span>
+              </div>
+            )}
+            <div className="card" style={{marginBottom:12}}>
+              <h4 style={{fontSize:16,marginBottom:6}}>Shop Device Allowlist</h4>
+              <p style={{color:"var(--muted)",fontSize:13,marginBottom:12}}>
+                Add the device IDs that are allowed for all staff logins at this shop. Leave blank to allow any device.
+              </p>
+              <textarea
+                className="input"
+                rows={4}
+                value={deviceAllowlistInput}
+                onChange={event => setDeviceAllowlistInput(event.target.value)}
+                placeholder="one device id per line or separated by commas"
+                style={{minHeight:100, resize:"vertical"}}
+              />
+              <button type="button" className="btn btn-gold" style={{width:"100%",marginTop:10}} onClick={() => { void saveDeviceAllowlist(); }}>
+                Save Device Allowlist
+              </button>
+            </div>
             <form className="card" onSubmit={changeStaffPassword}>
               <h4 style={{fontSize:16,marginBottom:6}}>Change Password</h4>
               <p style={{color:"var(--muted)",fontSize:13,marginBottom:16}}>
@@ -2778,7 +2837,7 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
-  const [form, setForm] = useState({name:"",pin:"",employmentType:"Full-time",standardHours:"10",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly", phone:"", email:"", gender:"", address:"", allowedDeviceIds:""});
+  const [form, setForm] = useState({name:"",pin:"",employmentType:"Full-time",standardHours:"10",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly", phone:"", email:"", gender:"", address:""});
   const [err, setErr] = useState("");
   const [confirmRemoveId, setConfirmRemoveId] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -2795,7 +2854,6 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
     const baseEmp = {
       ...form,
       standardHours: parseFloat(form.standardHours)||10,
-      allowedDeviceIds: normalizeAllowedDeviceIds(form.allowedDeviceIds),
     };
     if (canViewSalary) {
       baseEmp.hourlyRate = parseFloat(form.hourlyRate) || 0;
@@ -2824,7 +2882,7 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
     }
     setSaving(false);
     setEmployees(updated);
-    setForm({name:"",pin:"",employmentType:"Full-time",standardHours:"10",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly", phone:"", email:"", gender:"", address:"", allowedDeviceIds:""});
+    setForm({name:"",pin:"",employmentType:"Full-time",standardHours:"10",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly", phone:"", email:"", gender:"", address:""});
     setAdding(false); setEditingId(null); setErr(""); setConfirmRemoveId(null);
   };
 
@@ -2849,8 +2907,7 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
       branch: emp.branch || branches[0] || "",
       paymentCycle: canViewSalary ? (emp.paymentCycle || "Weekly") : "Weekly",
       phone: emp.phone || "", email: emp.email || "",
-      gender: emp.gender || "", address: emp.address || "",
-      allowedDeviceIds: Array.isArray(emp.allowedDeviceIds) ? emp.allowedDeviceIds.join(", ") : (emp.allowedDeviceIds || "")
+      gender: emp.gender || "", address: emp.address || ""
     });
     setEditingId(emp.id);
     setAdding(true);
@@ -2866,7 +2923,7 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
     <div className="fade-up">
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20, flexWrap: "wrap", gap: "10px"}}>
         <h3 style={{fontSize:20}}>Staff Members ({fEmployees.length})</h3>
-        <button className="btn btn-gold btn-sm" onClick={() => { setConfirmRemoveId(null); setAdding(p=>!p); if(adding) { setEditingId(null); setForm({name:"",pin:"",employmentType:"Full-time",standardHours:"10",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly", phone:"", email:"", gender:"", address:"", allowedDeviceIds:""}); }}}>
+        <button className="btn btn-gold btn-sm" onClick={() => { setConfirmRemoveId(null); setAdding(p=>!p); if(adding) { setEditingId(null); setForm({name:"",pin:"",employmentType:"Full-time",standardHours:"10",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly", phone:"", email:"", gender:"", address:""}); }}}>
           {adding ? "Cancel" : "+ Add Staff"}
         </button>
       </div>
@@ -2956,20 +3013,6 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
                 <input type="text" placeholder="Address" value={form.address} onChange={e => setForm(p=>({...p,address:e.target.value}))} className="input"/>
               </div>
             </div>
-            <div style={{marginBottom:12}}>
-              <label className="field-label">Allowed Device IDs</label>
-              <textarea
-                placeholder="Enter device IDs separated by commas or new lines"
-                value={form.allowedDeviceIds}
-                onChange={e => setForm(p=>({...p, allowedDeviceIds: e.target.value}))}
-                className="input"
-                rows={3}
-                style={{minHeight:80, resize:"vertical"}}
-              />
-              <div style={{fontSize:11, color:"var(--muted)", marginTop:6}}>
-                Leave blank to allow any device. Otherwise only matching device IDs can log in.
-              </div>
-            </div>
           </div>
           {err && <p style={{color:"var(--danger)",fontSize:13,marginBottom:12,padding:"8px 12px",background:"var(--danger-bg)",borderRadius:7}}>{err}</p>}
           <button className="btn btn-gold" style={{width:"100%"}} disabled={saving} onClick={save}>
@@ -3048,6 +3091,19 @@ function checkStaffSession() {
 export function AppClient() {
   const [session, setSession] = useState(null);
   const [sessionReady, setSessionReady] = useState(false);
+  const [deviceId, setDeviceId] = useState("");
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const storedDeviceId = window.localStorage.getItem("amigos_device_id");
+    if (storedDeviceId) {
+      setDeviceId(storedDeviceId);
+    } else {
+      const generated = window.crypto?.randomUUID?.() || `${window.navigator.userAgentData?.brands?.[0]?.brand || "device"}-${Date.now().toString(36)}`;
+      window.localStorage.setItem("amigos_device_id", generated);
+      setDeviceId(generated);
+    }
+  }, []);
 
   useEffect(() => {
     void (async () => {
@@ -3174,8 +3230,8 @@ export function AppClient() {
   }
 
   return !session
-    ? <LoginScreen onLogin={handleLogin} />
+    ? <LoginScreen onLogin={handleLogin} deviceId={deviceId} setDeviceId={setDeviceId} />
     : session.role === "employee"
       ? <EmployeeView employee={session.employee} onLogout={handleLogout} onUpdateEmployee={handleUpdateEmployee} />
-      : <OwnerDashboard role={session.role} onLogout={handleLogout} />;
+      : <OwnerDashboard role={session.role} onLogout={handleLogout} deviceId={deviceId} />;
 }
