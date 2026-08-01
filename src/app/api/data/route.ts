@@ -2,6 +2,7 @@ import { FieldPath } from "firebase-admin/firestore";
 import { NextRequest, NextResponse } from "next/server";
 
 import { readRequestSession } from "@/lib/auth/request-session";
+import { settingsForRole } from "@/lib/auth/settings-access";
 import { serverDb } from "@/lib/firebase/server";
 
 const COLLECTIONS = ["employees", "timelogs", "leaves", "advances", "branches"] as const;
@@ -52,7 +53,10 @@ export async function GET(request: NextRequest) {
 
   if (collectionName === "appSettings") {
     const snapshot = await serverDb.doc("amigos_store/appSettings").get();
-    return NextResponse.json({ data: snapshot.exists ? snapshot.data()?.value ?? null : null });
+    const settings = snapshot.exists
+      ? snapshot.data()?.value as DataRecord ?? null
+      : null;
+    return NextResponse.json({ data: settingsForRole(settings, session.role) });
   }
   if (!isCollection(collectionName)) {
     return NextResponse.json({ error: "Invalid collection." }, { status: 400 });
@@ -142,7 +146,10 @@ export async function POST(request: NextRequest) {
     if (session.role !== "owner" || operation !== "set") {
       return NextResponse.json({ error: "Forbidden." }, { status: 403 });
     }
-    await serverDb.doc("amigos_store/appSettings").set({ value: data }, { merge: true });
+    await serverDb.doc("amigos_store/appSettings").set(
+      { value: data, _updatedAt: Date.now() },
+      { merge: true },
+    );
     return NextResponse.json({ success: true });
   }
 
@@ -200,8 +207,9 @@ export async function POST(request: NextRequest) {
   }
 
   const reference = serverDb.collection(collectionName).doc(id);
-  if (operation === "add") await reference.set(data);
-  if (operation === "update") await reference.set(data, { merge: true });
+  const timestampedData = { ...data, _updatedAt: Date.now() };
+  if (operation === "add") await reference.set(timestampedData);
+  if (operation === "update") await reference.set(timestampedData, { merge: true });
   if (operation === "remove") await reference.delete();
   return NextResponse.json({ success: true });
 }

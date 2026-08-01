@@ -8,18 +8,22 @@ import {
   STAFF_SESSION_TTL_SECONDS,
   type StaffRole,
 } from "@/lib/auth/session";
+import { readJsonBody, RequestBodyError } from "@/lib/http/read-json";
 
 export async function POST(request: Request) {
   let body: { role?: unknown; password?: unknown };
   try {
-    body = (await request.json()) as typeof body;
-  } catch {
-    return NextResponse.json({ error: "Invalid request." }, { status: 400 });
+    body = await readJsonBody<typeof body>(request);
+  } catch (error) {
+    const status = error instanceof RequestBodyError ? error.status : 400;
+    return NextResponse.json({ error: "Invalid request." }, { status });
   }
 
   if (
     (body.role !== "owner" && body.role !== "manager") ||
-    typeof body.password !== "string"
+    typeof body.password !== "string" ||
+    body.password.length === 0 ||
+    body.password.length > 256
   ) {
     return NextResponse.json(
       { error: "Role and password are required." },

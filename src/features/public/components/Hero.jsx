@@ -221,6 +221,7 @@ const css = `
 
 export default function Hero() {
   const [activeSlide, setActiveSlide] = useState(0)
+  const [loadedSlides, setLoadedSlides] = useState(() => new Set([0]))
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -228,6 +229,21 @@ export default function Hero() {
     }, 5000)
     return () => clearInterval(interval)
   }, [])
+
+  useEffect(() => {
+    const nextSlide = (activeSlide + 1) % HERO_IMAGES.length
+    const image = new window.Image()
+    image.onload = () => {
+      setLoadedSlides(current => {
+        if (current.has(nextSlide)) return current
+        return new Set([...current, nextSlide])
+      })
+    }
+    image.src = HERO_IMAGES[nextSlide]
+    return () => {
+      image.onload = null
+    }
+  }, [activeSlide])
 
   return (
     <>
@@ -238,7 +254,11 @@ export default function Hero() {
             <div
               key={i}
               className={`hero__slide${i === activeSlide ? ' active' : ''}`}
-              style={{ backgroundImage: `url(${img})` }}
+              style={{
+                backgroundImage: loadedSlides.has(i) || i === activeSlide
+                  ? `url(${img})`
+                  : 'none',
+              }}
             />
           ))}
           <div className="hero__overlay" />

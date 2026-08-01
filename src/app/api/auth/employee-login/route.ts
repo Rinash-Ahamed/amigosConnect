@@ -11,6 +11,7 @@ import {
   STAFF_SESSION_TTL_SECONDS,
 } from "@/lib/auth/session";
 import { serverDb } from "@/lib/firebase/server";
+import { readJsonBody, RequestBodyError } from "@/lib/http/read-json";
 
 function employeeProfile(data: Record<string, unknown>) {
   const profile = { ...data };
@@ -41,12 +42,16 @@ function matchesDevelopmentPin(pin: string) {
 export async function POST(request: Request) {
   let body: { pin?: unknown; deviceId?: unknown };
   try {
-    body = (await request.json()) as typeof body;
-  } catch {
-    return NextResponse.json({ error: "Invalid request." }, { status: 400 });
+    body = await readJsonBody<typeof body>(request);
+  } catch (error) {
+    const status = error instanceof RequestBodyError ? error.status : 400;
+    return NextResponse.json({ error: "Invalid request." }, { status });
   }
   if (typeof body.pin !== "string" || !/^\d{6}$/.test(body.pin)) {
     return NextResponse.json({ error: "PIN not recognized." }, { status: 401 });
+  }
+  if (typeof body.deviceId === "string" && body.deviceId.length > 256) {
+    return NextResponse.json({ error: "Invalid request." }, { status: 400 });
   }
   if (!serverDb || !process.env.AUTH_SECRET) {
     return NextResponse.json(

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, lazy, Suspense, createContext, useContext } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense, createContext, useContext } from "react";
 import {
   CheckCircle, StopCircle, User, Briefcase, Calendar, 
   Download, Clock, Check, X, Inbox, ClipboardList, IndianRupee, 
@@ -12,6 +12,66 @@ import { normalizeAllowedDeviceIds } from "../../lib/auth/device-access";
 const dashboardSubscribers = new Map();
 let dashboardPollTimer = null;
 let pendingDashboardRefresh = null;
+let dashboardSnapshotCache = null;
+let dashboardSnapshotCursor = 0;
+let dashboardLastFullSyncAt = 0;
+const DASHBOARD_POLL_INTERVAL_MS = 30 * 1000;
+const DASHBOARD_FULL_SYNC_INTERVAL_MS = 10 * 60 * 1000;
+const TOAST_EVENT = "amigos:toast";
+
+function showToast(message, type = "success") {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(TOAST_EVENT, {
+    detail: { message, type },
+  }));
+}
+
+function ToastHost() {
+  const [toast, setToast] = useState(null);
+  const timeoutRef = useRef(null);
+
+  useEffect(() => {
+    const handleToast = (event) => {
+      window.clearTimeout(timeoutRef.current);
+      setToast(event.detail);
+      timeoutRef.current = window.setTimeout(() => setToast(null), 3000);
+    };
+    window.addEventListener(TOAST_EVENT, handleToast);
+    return () => {
+      window.removeEventListener(TOAST_EVENT, handleToast);
+      window.clearTimeout(timeoutRef.current);
+    };
+  }, []);
+
+  if (!toast) return null;
+  const isError = toast.type === "error";
+  return (
+    <div
+      role={isError ? "alert" : "status"}
+      aria-live={isError ? "assertive" : "polite"}
+      style={{
+        position:"fixed",top:20,left:"50%",transform:"translateX(-50%)",
+        zIndex:10000,maxWidth:"calc(100vw - 32px)",padding:"12px 18px",
+        borderRadius:10,display:"flex",alignItems:"center",gap:9,
+        color:isError ? "#ffdada" : "#dcffe7",
+        background:isError ? "#4a191d" : "#173d28",
+        border:`1px solid ${isError ? "#8f343c" : "#347a50"}`,
+        boxShadow:"0 12px 32px rgba(0,0,0,.35)",fontSize:13,fontWeight:600,
+      }}
+    >
+      {isError ? <X size={17} aria-hidden="true" /> : <CheckCircle size={17} aria-hidden="true" />}
+      <span>{toast.message}</span>
+    </div>
+  );
+}
+
+function mergeSnapshotRecords(current = [], changed = []) {
+  const recordsById = new Map(current.map(record => [record.id, record]));
+  changed.forEach(record => {
+    if (record?.id) recordsById.set(record.id, record);
+  });
+  return [...recordsById.values()];
+}
 
 async function requestData(params) {
   const search = new URLSearchParams(params);
@@ -32,17 +92,52 @@ async function mutateData(operation, collectionName, id, data = {}) {
 
 function refreshDashboardSnapshot() {
   if (pendingDashboardRefresh) return pendingDashboardRefresh;
-  pendingDashboardRefresh = fetch("/api/data/snapshot", { cache: "no-store" })
+  let retryWithFullSnapshot = false;
+  const fullSyncDue =
+    !dashboardSnapshotCache ||
+    Date.now() - dashboardLastFullSyncAt >= DASHBOARD_FULL_SYNC_INTERVAL_MS;
+  const snapshotUrl = fullSyncDue
+    ? "/api/data/snapshot"
+    : `/api/data/snapshot?since=${dashboardSnapshotCursor}`;
+
+  pendingDashboardRefresh = fetch(snapshotUrl, { cache: "no-store" })
     .then(async response => {
       if (!response.ok) throw new Error(`Dashboard sync failed with ${response.status}.`);
       const snapshot = await response.json();
+
+      if (dashboardSnapshotCache && dashboardSnapshotCache.role !== snapshot.role) {
+        dashboardSnapshotCache = null;
+        dashboardSnapshotCursor = 0;
+        dashboardLastFullSyncAt = 0;
+        retryWithFullSnapshot = true;
+        return;
+      }
+
+      if (snapshot.full || !dashboardSnapshotCache) {
+        dashboardSnapshotCache = snapshot;
+        dashboardLastFullSyncAt = Date.now();
+      } else {
+        dashboardSnapshotCache = {
+          ...dashboardSnapshotCache,
+          cursor: snapshot.cursor,
+          appSettings: snapshot.appSettings,
+          employees: mergeSnapshotRecords(dashboardSnapshotCache.employees, snapshot.employees),
+          timelogs: mergeSnapshotRecords(dashboardSnapshotCache.timelogs, snapshot.timelogs),
+          leaves: mergeSnapshotRecords(dashboardSnapshotCache.leaves, snapshot.leaves),
+          advances: mergeSnapshotRecords(dashboardSnapshotCache.advances, snapshot.advances),
+        };
+      }
+      dashboardSnapshotCursor = snapshot.cursor;
       dashboardSubscribers.forEach((callbacks, key) => {
-        callbacks.forEach(callback => callback(snapshot[key] ?? null));
+        callbacks.forEach(callback => callback(dashboardSnapshotCache[key] ?? null));
       });
     })
     .catch(error => console.error("Dashboard sync error:", error))
     .finally(() => {
       pendingDashboardRefresh = null;
+      if (retryWithFullSnapshot) {
+        queueMicrotask(() => void refreshDashboardSnapshot());
+      }
     });
   return pendingDashboardRefresh;
 }
@@ -116,6 +211,21 @@ const storage = {
       return false;
     }
   },
+  async batchUpdate(updates, settings) {
+    try {
+      const body = { updates };
+      if (settings !== undefined) body.settings = settings;
+      const response = await fetch("/api/data/batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      return response.ok;
+    } catch (e) {
+      console.error("Atomic data update error:", e);
+      return false;
+    }
+  },
   subscribe(key, callback) {
     if (!dashboardSubscribers.has(key)) {
       dashboardSubscribers.set(key, new Set());
@@ -125,7 +235,7 @@ const storage = {
     if (!dashboardPollTimer) {
       dashboardPollTimer = window.setInterval(
         () => void refreshDashboardSnapshot(),
-        15000,
+        DASHBOARD_POLL_INTERVAL_MS,
       );
     }
     return () => {
@@ -133,6 +243,9 @@ const storage = {
       if ([...dashboardSubscribers.values()].every(callbacks => callbacks.size === 0)) {
         window.clearInterval(dashboardPollTimer);
         dashboardPollTimer = null;
+        dashboardSnapshotCache = null;
+        dashboardSnapshotCursor = 0;
+        dashboardLastFullSyncAt = 0;
       }
     };
   }
@@ -241,7 +354,7 @@ const hoursWorked = (clockIn, clockOut, breaks = []) => {
 };
 const totalHours = (logs) =>
   logs.reduce((s, l) => s + hoursWorked(l.clockIn, l.clockOut, l.breaks), 0);
-const uid = () => Math.random().toString(36).slice(2, 10);
+const uid = () => globalThis.crypto.randomUUID();
 const employeePortalProfile = (employee) => {
   if (!employee) return employee;
   const profile = { ...employee };
@@ -633,7 +746,7 @@ function PinPad({ value, onChange, maxLen = EMPLOYEE_PIN_LENGTH }) {
 }
 
 // ── Login Screen ──
-function LoginScreen({ onLogin, deviceId, setDeviceId }) {
+function LoginScreen({ onLogin, deviceId }) {
   const [mode, setMode] = useState(null);
   const [pin, setPin] = useState("");
   const [pass, setPass] = useState("");
@@ -675,18 +788,6 @@ function LoginScreen({ onLogin, deviceId, setDeviceId }) {
     };
     window.addEventListener('beforeinstallprompt', handleInstallPrompt);
     return () => window.removeEventListener('beforeinstallprompt', handleInstallPrompt);
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const storedDeviceId = window.localStorage.getItem("amigos_device_id");
-    if (storedDeviceId) {
-      setDeviceId(storedDeviceId);
-    } else {
-      const generated = window.crypto?.randomUUID?.() || `${window.navigator.userAgentData?.brands?.[0]?.brand || "device"}-${Date.now().toString(36)}`;
-      window.localStorage.setItem("amigos_device_id", generated);
-      setDeviceId(generated);
-    }
   }, []);
 
   const tryEmployeePin = useCallback(async (p) => {
@@ -814,6 +915,7 @@ function LoginScreen({ onLogin, deviceId, setDeviceId }) {
             <input
               type={showPass ? "text" : "password"} placeholder="Enter password" value={pass}
               onChange={e => setPass(e.target.value)}
+              maxLength={256}
               className="input"
               style={{marginBottom:0, paddingRight:40}}
               onKeyDown={(e) => {
@@ -894,12 +996,12 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
     setProfileSaving(true);
     const storedEmployee = await storage.getById("employees", employee.id);
     if (storedEmployee === undefined) {
-      alert("Could not load staff data. Please check your connection and try again.");
+      showToast("Could not load staff data. Please try again.", "error");
       setProfileSaving(false);
       return;
     }
     if (!storedEmployee) {
-      alert("Your staff profile was not found. Please ask the owner to refresh staff data.");
+      showToast("Your staff profile was not found. Please ask the Owner for help.", "error");
       setProfileSaving(false);
       return;
     }
@@ -907,11 +1009,12 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
     const saved = await storage.update("employees", employee.id, updatedEmp);
     setProfileSaving(false);
     if (!saved) {
-      alert("Profile update failed. Check your connection and try again.");
+      showToast("Profile update failed. Please try again.", "error");
       return;
     }
     if(onUpdateEmployee) onUpdateEmployee(updatedEmp);
     setProfileSaved(true);
+    showToast("Profile saved.");
     setTimeout(() => setProfileSaved(false), 3000);
   };
 
@@ -955,14 +1058,15 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
         l.employeeId === employee.id && l.status === "approved" &&
         today >= l.from && today <= l.to
       );
-      if (onLeave) { alert("You are on approved leave today and cannot clock in."); return; }
+      if (onLeave) { showToast("You are on approved leave today and cannot clock in.", "error"); return; }
       const log = { id: uid(), employeeId: employee.id, name: employee.name, clockIn: new Date().toISOString(), clockOut: null };
       if (!await storage.add("timelogs", log)) {
-        alert("Clock-in failed. Check your connection and try again.");
+        showToast("Clock-in failed. Please try again.", "error");
         return;
       }
       setLogs(p => [...p, log]);
       setActive(log);
+      showToast("Checked in successfully.");
     } finally {
       setClocking(false);
     }
@@ -976,11 +1080,12 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
       const legacyBreaks = closeOpenBreaksAt(active, clockOutIso);
       const updated = { ...active, clockOut: clockOutIso, breaks: legacyBreaks };
       if (!await storage.update("timelogs", active.id, { clockOut: clockOutIso, breaks: legacyBreaks })) {
-        alert("Clock-out failed. Check your connection and try again.");
+        showToast("Clock-out failed. Please try again.", "error");
         return;
       }
       setLogs(p => p.map(l => l.id === active.id ? updated : l));
       setActive(null);
+      showToast("Checked out successfully.");
     } finally {
       setClocking(false);
     }
@@ -1008,12 +1113,14 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
     setLeaveSubmitting(false);
     if (!saved) {
       setLeaveErr("Could not submit the request. Check your connection and try again.");
+      showToast("Leave request could not be submitted.", "error");
       return;
     }
     setLeaves(p => [...p, req]);
     setLeaveForm({ from:"", to:"", type:"Casual", reason:"" });
     setLeaveSent(true);
-    setTimeout(() => setLeaveSent(false), 4000);
+    showToast("Leave request submitted.");
+    setTimeout(() => setLeaveSent(false), 3000);
   };
 
   const submitAdvance = async () => {
@@ -1039,12 +1146,14 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
     setAdvanceSubmitting(false);
     if (!saved) {
       setAdvanceErr("Could not submit the request. Check your connection and try again.");
+      showToast("Advance request could not be submitted.", "error");
       return;
     }
     setAdvances(p => [...p, req]);
     setAdvanceForm({ amount:"", reason:"" });
     setAdvanceSent(true);
-    setTimeout(() => setAdvanceSent(false), 4000);
+    showToast("Advance request submitted.");
+    setTimeout(() => setAdvanceSent(false), 3000);
   };
 
   const weekLogs = useMemo(() => logs.filter(l => {
@@ -1637,47 +1746,52 @@ function OwnerDashboard({ role, onLogout, deviceId }) {
     if (!window.confirm("Are you sure you want to delete this timesheet record?")) return;
     const n = logs.filter(l => l.id !== id);
     if (!await storage.remove("timelogs", id)) {
-      alert("Could not delete the timesheet record.");
+      showToast("Could not delete the timesheet record.", "error");
       return;
     }
     setLogs(n);
+    showToast("Timesheet record deleted.");
   };
 
   const approveLeave = async (id) => {
     const n = leaves.map(l => l.id === id ? {...l, status:"approved"} : l);
     if (!await storage.update("leaves", id, { status:"approved" })) {
-      alert("Could not approve the leave request.");
+      showToast("Could not approve the leave request.", "error");
       return;
     }
     setLeaves(n);
+    showToast("Leave request approved.");
   };
 
   const rejectLeave = async (id) => {
     const n = leaves.map(l => l.id === id ? {...l, status:"rejected"} : l);
     if (!await storage.update("leaves", id, { status:"rejected" })) {
-      alert("Could not reject the leave request.");
+      showToast("Could not reject the leave request.", "error");
       return;
     }
     setLeaves(n);
+    showToast("Leave request rejected.");
   };
 
   const markAdvancePaid = async (id) => {
     const paidAt = new Date().toISOString();
     const n = advances.map(a => a.id === id ? {...a, status:"paid", paidAt} : a);
     if (!await storage.update("advances", id, { status:"paid", paidAt })) {
-      alert("Could not mark the advance as paid.");
+      showToast("Could not mark the advance as paid.", "error");
       return;
     }
     setAdvances(n);
+    showToast("Advance marked as paid.");
   };
 
   const rejectAdvance = async (id) => {
     const n = advances.map(a => a.id === id ? {...a, status:"rejected"} : a);
     if (!await storage.update("advances", id, { status:"rejected" })) {
-      alert("Could not reject the advance.");
+      showToast("Could not reject the advance.", "error");
       return;
     }
     setAdvances(n);
+    showToast("Advance request rejected.");
   };
 
   const clockOutAllActive = async () => {
@@ -1685,14 +1799,17 @@ function OwnerDashboard({ role, onLogout, deviceId }) {
     const nowIso = new Date().toISOString();
     const activeIds = new Set(filteredActiveSessions.map(s => s.id));
     const updatedLogs = logs.map(l => activeIds.has(l.id) ? { ...l, clockOut: nowIso, breaks: closeOpenBreaksAt(l, nowIso) } : l);
-    const results = await Promise.all(filteredActiveSessions.map(sess =>
-      storage.update("timelogs", sess.id, { clockOut: nowIso, breaks: closeOpenBreaksAt(sess, nowIso) })
-    ));
-    if (results.some(result => !result)) {
-      alert("Some employees could not be clocked out. The dashboard will refresh successful updates.");
+    const updates = filteredActiveSessions.map(sess => ({
+      collection: "timelogs",
+      id: sess.id,
+      data: { clockOut: nowIso, breaks: closeOpenBreaksAt(sess, nowIso) },
+    }));
+    if (!await storage.batchUpdate(updates)) {
+      showToast("Employees could not be clocked out. Please try again.", "error");
       return;
     }
     setLogs(updatedLogs);
+    showToast("All active employees were clocked out.");
   };
 
   const clockOutSingle = async (id, name) => {
@@ -1701,28 +1818,27 @@ function OwnerDashboard({ role, onLogout, deviceId }) {
     const updatedLogs = logs.map(l => l.id === id ? { ...l, clockOut: nowIso, breaks: closeOpenBreaksAt(l, nowIso) } : l);
     const l = logs.find(l => l.id === id);
     if (!l || !await storage.update("timelogs", id, { clockOut: nowIso, breaks: closeOpenBreaksAt(l, nowIso) })) {
-      alert(`Could not clock out ${name}.`);
+      showToast(`Could not clock out ${name}.`, "error");
       return;
     }
     setLogs(updatedLogs);
+    showToast(`${name} was clocked out.`);
   };
 
   const updateSettings = async (newSt) => {
     const updated = { ...settings, ...newSt };
     if (!await storage.set("appSettings", updated)) {
-      alert("Could not save settings.");
+      showToast("Could not save settings.", "error");
       return false;
     }
     setSettings(updated);
+    showToast("Settings saved.");
     return true;
   };
 
   const saveDeviceAllowlist = async () => {
     const normalized = normalizeAllowedDeviceIds(deviceAllowlistInput);
-    const updated = await updateSettings({ deviceAllowlist: normalized });
-    if (!updated) {
-      alert("Could not save the device allowlist.");
-    }
+    await updateSettings({ deviceAllowlist: normalized });
   };
 
   const changeStaffPassword = async (event) => {
@@ -1733,10 +1849,12 @@ function OwnerDashboard({ role, onLogout, deviceId }) {
 
     if (passwordForm.newPassword.length < 8) {
       setPasswordError("The new password must be at least 8 characters.");
+      showToast("The new password must be at least 8 characters.", "error");
       return;
     }
     if (passwordForm.newPassword !== passwordForm.confirmPassword) {
       setPasswordError("The new passwords do not match.");
+      showToast("The new passwords do not match.", "error");
       return;
     }
 
@@ -1753,7 +1871,9 @@ function OwnerDashboard({ role, onLogout, deviceId }) {
       });
       const result = await response.json();
       if (!response.ok) {
-        setPasswordError(result.error || "Could not update the password.");
+        const message = result.error || "Could not update the password.";
+        setPasswordError(message);
+        showToast(message, "error");
         return;
       }
       setPasswordForm({
@@ -1767,8 +1887,10 @@ function OwnerDashboard({ role, onLogout, deviceId }) {
         confirmPassword: false,
       });
       setPasswordMessage(`${passwordTarget === "owner" ? "Owner" : "Manager"} password updated in Firestore.`);
+      showToast(`${passwordTarget === "owner" ? "Owner" : "Manager"} password updated.`);
     } catch {
       setPasswordError("Could not reach the password service. Try again.");
+      showToast("Could not update the password. Please try again.", "error");
     } finally {
       setPasswordSaving(false);
     }
@@ -1777,34 +1899,48 @@ function OwnerDashboard({ role, onLogout, deviceId }) {
   const saveEditBranch = async (oldName) => {
     const nb = editBranchValue.trim();
     if (!nb) { setEditingBranch(null); return; }
-    if (nb !== oldName && settings.branches?.includes(nb)) { alert("Branch already exists!"); return; }
+    if (nb !== oldName && settings.branches?.includes(nb)) { showToast("Branch already exists.", "error"); return; }
     
     const updatedBranches = settings.branches.map(b => b === oldName ? nb : b);
+    const updatedSettings = { ...settings, branches: updatedBranches };
     const updatedEmployees = employees.map(e => e.branch === oldName ? { ...e, branch: nb } : e);
     const changedEmps = employees.filter(e => e.branch === oldName);
-    const employeeResults = await Promise.all(changedEmps.map(e => storage.update("employees", e.id, { branch: nb })));
-    if (employeeResults.some(result => !result) || !await updateSettings({ branches: updatedBranches })) {
-      alert("The branch could not be fully updated. Refresh and try again.");
+    const updates = changedEmps.map(employee => ({
+      collection: "employees",
+      id: employee.id,
+      data: { branch: nb },
+    }));
+    if (!await storage.batchUpdate(updates, updatedSettings)) {
+      showToast("The branch could not be updated. Please try again.", "error");
       return;
     }
     setEmployees(updatedEmployees);
+    setSettings(updatedSettings);
     setEditingBranch(null);
     if (selectedBranch === oldName) setSelectedBranch(nb);
+    showToast("Branch updated.");
   };
 
   const deleteBranch = async (branchName) => {
     if (!window.confirm(`Delete branch "${branchName}"?\n\nEmployees in this branch will be unassigned.`)) return;
     
     const updatedBranches = settings.branches.filter(b => b !== branchName);
+    const updatedSettings = { ...settings, branches: updatedBranches };
     const updatedEmployees = employees.map(e => e.branch === branchName ? { ...e, branch: "" } : e);
     const changedEmps = employees.filter(e => e.branch === branchName);
-    const employeeResults = await Promise.all(changedEmps.map(e => storage.update("employees", e.id, { branch: "" })));
-    if (employeeResults.some(result => !result) || !await updateSettings({ branches: updatedBranches })) {
-      alert("The branch could not be fully removed. Refresh and try again.");
+    const updates = changedEmps.map(employee => ({
+      collection: "employees",
+      id: employee.id,
+      data: { branch: "" },
+    }));
+    if (!await storage.batchUpdate(updates, updatedSettings)) {
+      showToast("The branch could not be removed. Please try again.", "error");
       return;
     }
     setEmployees(updatedEmployees);
+    setSettings(updatedSettings);
     if (selectedBranch === branchName) setSelectedBranch("All");
+    showToast("Branch removed.");
   };
 
   const calculatePayrollDetails = useCallback((logs, employee) => {
@@ -2647,6 +2783,7 @@ function OwnerDashboard({ role, onLogout, deviceId }) {
                         style={{marginBottom:0,paddingRight:40}}
                         autoComplete={field.autoComplete}
                         minLength={field.key === "currentPassword" ? undefined : 8}
+                        maxLength={256}
                         value={passwordForm[field.key]}
                         onChange={event => setPasswordForm(current => ({...current,[field.key]:event.target.value}))}
                         required
@@ -2795,7 +2932,7 @@ function OwnerDashboard({ role, onLogout, deviceId }) {
                 disabled={!newBranch.trim()}
                 onClick={() => {
                   const nb = newBranch.trim();
-                  if (settings.branches?.includes(nb)) { alert("Branch already exists!"); return; }
+                  if (settings.branches?.includes(nb)) { showToast("Branch already exists.", "error"); return; }
                   updateSettings({ branches: [...(settings.branches || []), nb] });
                   setNewBranch("");
                 }}
@@ -2821,7 +2958,7 @@ function OwnerDashboard({ role, onLogout, deviceId }) {
 
             {/* Developer Info Footer */}
             <div style={{ textAlign: "center", marginTop: 40, marginBottom: 20, color: "var(--muted)", fontSize: 12, lineHeight: 1.6 }}>
-              <p style={{ fontWeight: 600, color: "var(--text-2)", letterSpacing: "0.05em", textTransform: "uppercase" }}>Amigos Connect v1.0.1</p>
+              <p style={{ fontWeight: 600, color: "var(--text-2)", letterSpacing: "0.05em", textTransform: "uppercase" }}>Amigos Connect v1.3.0</p>
               <p style={{ marginTop: 4 }}>Developer: Rinash Ahamed</p>
             </div>
           </div>
@@ -2845,10 +2982,10 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
 
   const save = async () => {
     if (saving) return;
-    if (!form.name || !form.pin || !form.branch) { setErr("Name, PIN, and Branch are required."); return; }
-    if (form.pin.length !== EMPLOYEE_PIN_LENGTH || !/^\d+$/.test(form.pin)) { setErr("PIN must be exactly 6 digits."); return; }
+    if (!form.name || !form.pin || !form.branch) { setErr("Name, PIN, and Branch are required."); showToast("Name, PIN, and Branch are required.", "error"); return; }
+    if (form.pin.length !== EMPLOYEE_PIN_LENGTH || !/^\d+$/.test(form.pin)) { setErr("PIN must be exactly 6 digits."); showToast("PIN must be exactly 6 digits.", "error"); return; }
     const currentEmployees = employees;
-    if (currentEmployees.find(e=>e.pin===form.pin && e.id !== editingId)) { setErr("PIN already taken."); return; }
+    if (currentEmployees.find(e=>e.pin===form.pin && e.id !== editingId)) { setErr("PIN already taken."); showToast("PIN already taken.", "error"); return; }
     
     let updated;
     const baseEmp = {
@@ -2867,6 +3004,7 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
     if (editingId) {
       if (!await storage.update("employees", editingId, baseEmp)) {
         setErr("Could not update the employee. Check your connection and try again.");
+        showToast("Could not update the employee. Please try again.", "error");
         setSaving(false);
         return;
       }
@@ -2875,6 +3013,7 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
       const emp = { id: uid(), ...baseEmp };
       if (!await storage.add("employees", emp)) {
         setErr("Could not add the employee. Check your connection and try again.");
+        showToast("Could not add the employee. Please try again.", "error");
         setSaving(false);
         return;
       }
@@ -2884,19 +3023,21 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
     setEmployees(updated);
     setForm({name:"",pin:"",employmentType:"Full-time",standardHours:"10",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly", phone:"", email:"", gender:"", address:""});
     setAdding(false); setEditingId(null); setErr(""); setConfirmRemoveId(null);
+    showToast(editingId ? "Employee updated." : "Employee added.");
   };
 
   const remove = async (id) => {
     if (!canDeleteStaff || deletingId) return;
     setDeletingId(id);
     if (!await storage.removeEmployeeCascade(id)) {
-      alert("Could not completely remove the employee records. The employee was kept so you can retry.");
+      showToast("Could not remove the employee records. Please try again.", "error");
       setDeletingId(null);
       return;
     }
     setEmployees(current => current.filter(employee => employee.id !== id));
     setConfirmRemoveId(null);
     setDeletingId(null);
+    showToast("Employee and related records removed.");
   };
 
   const edit = (emp) => {
@@ -3229,9 +3370,14 @@ export function AppClient() {
     );
   }
 
-  return !session
-    ? <LoginScreen onLogin={handleLogin} deviceId={deviceId} setDeviceId={setDeviceId} />
-    : session.role === "employee"
-      ? <EmployeeView employee={session.employee} onLogout={handleLogout} onUpdateEmployee={handleUpdateEmployee} />
-      : <OwnerDashboard role={session.role} onLogout={handleLogout} deviceId={deviceId} />;
+  return (
+    <>
+      <ToastHost />
+      {!session
+        ? <LoginScreen onLogin={handleLogin} deviceId={deviceId} />
+        : session.role === "employee"
+          ? <EmployeeView employee={session.employee} onLogout={handleLogout} onUpdateEmployee={handleUpdateEmployee} />
+          : <OwnerDashboard role={session.role} onLogout={handleLogout} deviceId={deviceId} />}
+    </>
+  );
 }
