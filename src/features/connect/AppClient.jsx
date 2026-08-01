@@ -15,8 +15,12 @@ let pendingDashboardRefresh = null;
 let dashboardSnapshotCache = null;
 let dashboardSnapshotCursor = 0;
 let dashboardLastFullSyncAt = 0;
+let dashboardLastActivityAt = Date.now();
+let dashboardPollingPaused = false;
+let dashboardActivityCleanup = null;
 const DASHBOARD_POLL_INTERVAL_MS = 30 * 1000;
 const DASHBOARD_FULL_SYNC_INTERVAL_MS = 10 * 60 * 1000;
+const DASHBOARD_INACTIVITY_PAUSE_MS = 2 * 60 * 1000;
 const TOAST_EVENT = "amigos:toast";
 
 function showToast(message, type = "success") {
@@ -142,6 +146,58 @@ function refreshDashboardSnapshot() {
   return pendingDashboardRefresh;
 }
 
+function startDashboardPolling() {
+  if (dashboardPollTimer) return;
+
+  dashboardLastActivityAt = Date.now();
+  dashboardPollingPaused = false;
+
+  const resumePolling = () => {
+    dashboardLastActivityAt = Date.now();
+    if (document.hidden || !dashboardPollingPaused) return;
+    dashboardPollingPaused = false;
+    void refreshDashboardSnapshot();
+  };
+  const handleVisibilityChange = () => {
+    if (document.hidden) {
+      dashboardPollingPaused = true;
+      return;
+    }
+    dashboardLastActivityAt = Date.now();
+    dashboardPollingPaused = false;
+    void refreshDashboardSnapshot();
+  };
+  const activityEvents = ["pointermove", "pointerdown", "keydown", "touchstart", "scroll"];
+  activityEvents.forEach(eventName => {
+    window.addEventListener(eventName, resumePolling, { passive: true });
+  });
+  document.addEventListener("visibilitychange", handleVisibilityChange);
+
+  dashboardActivityCleanup = () => {
+    activityEvents.forEach(eventName => {
+      window.removeEventListener(eventName, resumePolling);
+    });
+    document.removeEventListener("visibilitychange", handleVisibilityChange);
+  };
+
+  dashboardPollTimer = window.setInterval(() => {
+    const inactive = Date.now() - dashboardLastActivityAt >= DASHBOARD_INACTIVITY_PAUSE_MS;
+    if (document.hidden || inactive) {
+      dashboardPollingPaused = true;
+      return;
+    }
+    void refreshDashboardSnapshot();
+  }, DASHBOARD_POLL_INTERVAL_MS);
+}
+
+function stopDashboardPolling() {
+  if (dashboardPollTimer) window.clearInterval(dashboardPollTimer);
+  dashboardPollTimer = null;
+  dashboardActivityCleanup?.();
+  dashboardActivityCleanup = null;
+  dashboardPollingPaused = false;
+}
+
 // ── Storage helpers ──
 const storage = {
   async get(key) {
@@ -232,17 +288,11 @@ const storage = {
     }
     dashboardSubscribers.get(key).add(callback);
     queueMicrotask(() => void refreshDashboardSnapshot());
-    if (!dashboardPollTimer) {
-      dashboardPollTimer = window.setInterval(
-        () => void refreshDashboardSnapshot(),
-        DASHBOARD_POLL_INTERVAL_MS,
-      );
-    }
+    startDashboardPolling();
     return () => {
       dashboardSubscribers.get(key)?.delete(callback);
       if ([...dashboardSubscribers.values()].every(callbacks => callbacks.size === 0)) {
-        window.clearInterval(dashboardPollTimer);
-        dashboardPollTimer = null;
+        stopDashboardPolling();
         dashboardSnapshotCache = null;
         dashboardSnapshotCursor = 0;
         dashboardLastFullSyncAt = 0;

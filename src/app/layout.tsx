@@ -28,10 +28,14 @@ export const metadata: Metadata = {
   manifest: "/manifest.webmanifest",
   icons: {
     icon: [
-      { url: "/fashion-favicon.svg", type: "image/svg+xml" },
+      { url: "/fashion-favicon.png", sizes: "64x64", type: "image/png" },
       { url: "/fashion-logo.png", type: "image/png" },
     ],
-    apple: "/fashion-logo.png",
+    apple: [
+      { url: "/apple-touch-icon-152.png", sizes: "152x152", type: "image/png" },
+      { url: "/apple-touch-icon-167.png", sizes: "167x167", type: "image/png" },
+      { url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" },
+    ],
   },
   appleWebApp: {
     capable: true,
