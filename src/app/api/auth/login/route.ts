@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 
 import { verifyStaffPassword } from "@/lib/auth/staff-credentials";
 import {
+  consumeLoginAttempt,
+  loginRateLimitResponse,
+  resetLoginAttempts,
+} from "@/lib/auth/login-rate-limit";
+import {
   createStaffSession,
   isSecureRequest,
   STAFF_SESSION_COOKIE,
@@ -40,6 +45,20 @@ export async function POST(request: Request) {
     );
   }
 
+  let rateLimit;
+  try {
+    rateLimit = await consumeLoginAttempt(request, role);
+  } catch (error) {
+    console.error(`${roleLabel} login rate limit failed:`, error);
+    return NextResponse.json(
+      { error: `${roleLabel} login is temporarily unavailable. Please try again.` },
+      { status: 503 },
+    );
+  }
+  if (!rateLimit.allowed) {
+    return loginRateLimitResponse(rateLimit.retryAfterSeconds);
+  }
+
   let passwordMatches = false;
   try {
     passwordMatches = await verifyStaffPassword(role, body.password);
@@ -58,6 +77,13 @@ export async function POST(request: Request) {
       { error: "Incorrect password." },
       { status: 401 },
     );
+  }
+
+
+  try {
+    await resetLoginAttempts(rateLimit.key);
+  } catch (error) {
+    console.error(`${roleLabel} login rate limit reset failed:`, error);
   }
 
   const response = NextResponse.json({ role });

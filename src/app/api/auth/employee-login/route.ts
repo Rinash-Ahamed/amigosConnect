@@ -3,6 +3,11 @@ import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 
 import { isDeviceAllowed, normalizeAllowedDeviceIds } from "@/lib/auth/device-access";
+import {
+  consumeLoginAttempt,
+  loginRateLimitResponse,
+  resetLoginAttempts,
+} from "@/lib/auth/login-rate-limit";
 
 import {
   createEmployeeSession,
@@ -60,6 +65,21 @@ export async function POST(request: Request) {
     );
   }
 
+
+  let rateLimit;
+  try {
+    rateLimit = await consumeLoginAttempt(request, "employee");
+  } catch (error) {
+    console.error("Employee login rate limit failed:", error);
+    return NextResponse.json(
+      { error: "Staff login is temporarily unavailable. Please try again." },
+      { status: 503 },
+    );
+  }
+  if (!rateLimit.allowed) {
+    return loginRateLimitResponse(rateLimit.retryAfterSeconds);
+  }
+
   try {
     const employees = serverDb.collection("employees");
     const snapshot = matchesDevelopmentPin(body.pin)
@@ -87,6 +107,11 @@ export async function POST(request: Request) {
         { error: "This device is not authorized for this employee account." },
         { status: 401 },
       );
+    }
+    try {
+      await resetLoginAttempts(rateLimit.key);
+    } catch (error) {
+      console.error("Employee login rate limit reset failed:", error);
     }
     const employee = {
       ...employeeProfile(employeeData),
