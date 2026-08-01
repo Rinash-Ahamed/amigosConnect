@@ -3,7 +3,11 @@ import { createHmac } from "node:crypto";
 import { serverDb } from "@/lib/firebase/server";
 
 const RATE_LIMIT_COLLECTION = "authRateLimits";
-const MAX_ATTEMPTS = 5;
+const MAX_ATTEMPTS = {
+  owner: 5,
+  manager: 5,
+  employee: 30,
+} as const;
 const WINDOW_MS = 15 * 60 * 1000;
 const BLOCK_MS = 15 * 60 * 1000;
 
@@ -30,21 +34,22 @@ function clientAddress(request: Request) {
   return forwardedIp || "unknown";
 }
 
-function rateLimitKey(request: Request, scope: string) {
+function rateLimitKey(request: Request, scope: string, subject?: string) {
   const secret = process.env.AUTH_SECRET;
   if (!secret) throw new Error("AUTH_SECRET is not configured.");
   return createHmac("sha256", secret)
-    .update(`${scope}|${clientAddress(request)}`)
+    .update(`${scope}|${subject || clientAddress(request)}`)
     .digest("hex");
 }
 
 export async function consumeLoginAttempt(
   request: Request,
   scope: "owner" | "manager" | "employee",
+  subject?: string,
 ): Promise<LoginRateLimit> {
   if (!serverDb) throw new Error("Data service is unavailable.");
 
-  const key = rateLimitKey(request, scope);
+  const key = rateLimitKey(request, scope, subject);
   const reference = serverDb.collection(RATE_LIMIT_COLLECTION).doc(key);
   const now = Date.now();
 
@@ -69,7 +74,7 @@ export async function consumeLoginAttempt(
     const windowStartedAt = startsNewWindow ? now : previousWindowStart;
     const attempts = startsNewWindow ? 1 : (Number(data.attempts) || 0) + 1;
 
-    if (attempts > MAX_ATTEMPTS) {
+    if (attempts > MAX_ATTEMPTS[scope]) {
       const nextBlockedUntil = now + BLOCK_MS;
       transaction.set(reference, {
         attempts,

@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import {
+  AUTHORIZED_DEVICE_COOKIE,
   createEmployeeSession,
   createStaffSession,
   EMPLOYEE_SESSION_COOKIE,
   isSecureRequest,
+  readAuthorizedDevice,
   readEmployeeSession,
   readStaffSession,
   STAFF_SESSION_COOKIE,
@@ -15,8 +17,12 @@ function refreshSession(request: NextRequest, unauthenticatedStatus = 401) {
   const staffSession = readStaffSession(
     request.cookies.get(STAFF_SESSION_COOKIE)?.value,
   );
+  const authorizedDevice = readAuthorizedDevice(
+    request.cookies.get(AUTHORIZED_DEVICE_COOKIE)?.value,
+  );
   const employeeSession = readEmployeeSession(
     request.cookies.get(EMPLOYEE_SESSION_COOKIE)?.value,
+    authorizedDevice?.deviceId,
   );
   const session = staffSession || employeeSession;
   if (!session) {
@@ -33,7 +39,7 @@ function refreshSession(request: NextRequest, unauthenticatedStatus = 401) {
   if (session.role === "employee") {
     response.cookies.set(
       EMPLOYEE_SESSION_COOKIE,
-      createEmployeeSession(session.employeeId),
+      createEmployeeSession(session.employeeId, session.deviceId),
       {
         httpOnly: true,
         sameSite: "strict",

@@ -2,7 +2,9 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 
 export const STAFF_SESSION_COOKIE = "amigos_staff_session";
 export const EMPLOYEE_SESSION_COOKIE = "amigos_employee_session_token";
+export const AUTHORIZED_DEVICE_COOKIE = "amigos_authorized_device";
 export const STAFF_SESSION_TTL_SECONDS = 15 * 60;
+export const AUTHORIZED_DEVICE_TTL_SECONDS = 365 * 24 * 60 * 60;
 
 export type StaffRole = "owner" | "manager";
 
@@ -21,6 +23,12 @@ interface StaffSessionPayload {
 interface EmployeeSessionPayload {
   role: "employee";
   employeeId: string;
+  deviceId: string;
+  expiresAt: number;
+}
+
+interface AuthorizedDevicePayload {
+  deviceId: string;
   expiresAt: number;
 }
 
@@ -45,11 +53,21 @@ export function createStaffSession(role: StaffRole) {
   return `${encoded}.${sign(encoded)}`;
 }
 
-export function createEmployeeSession(employeeId: string) {
+export function createEmployeeSession(employeeId: string, deviceId: string) {
   const payload: EmployeeSessionPayload = {
     role: "employee",
     employeeId,
+    deviceId,
     expiresAt: Date.now() + STAFF_SESSION_TTL_SECONDS * 1000,
+  };
+  const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  return `${encoded}.${sign(encoded)}`;
+}
+
+export function createAuthorizedDevice(deviceId: string) {
+  const payload: AuthorizedDevicePayload = {
+    deviceId,
+    expiresAt: Date.now() + AUTHORIZED_DEVICE_TTL_SECONDS * 1000,
   };
   const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
   return `${encoded}.${sign(encoded)}`;
@@ -82,7 +100,10 @@ export function readStaffSession(token?: string): StaffSessionPayload | null {
   }
 }
 
-export function readEmployeeSession(token?: string): EmployeeSessionPayload | null {
+export function readEmployeeSession(
+  token?: string,
+  authorizedDeviceId?: string,
+): EmployeeSessionPayload | null {
   if (!token) return null;
   const [encoded, signature] = token.split(".");
   if (!encoded || !signature) return null;
@@ -101,6 +122,37 @@ export function readEmployeeSession(token?: string): EmployeeSessionPayload | nu
       payload.role !== "employee" ||
       typeof payload.employeeId !== "string" ||
       !payload.employeeId ||
+      typeof payload.deviceId !== "string" ||
+      !payload.deviceId ||
+      payload.deviceId !== authorizedDeviceId ||
+      payload.expiresAt <= Date.now()
+    ) {
+      return null;
+    }
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+export function readAuthorizedDevice(token?: string): AuthorizedDevicePayload | null {
+  if (!token) return null;
+  const [encoded, signature] = token.split(".");
+  if (!encoded || !signature) return null;
+
+  const expected = Buffer.from(sign(encoded));
+  const received = Buffer.from(signature);
+  if (expected.length !== received.length || !timingSafeEqual(expected, received)) {
+    return null;
+  }
+
+  try {
+    const payload = JSON.parse(
+      Buffer.from(encoded, "base64url").toString("utf8"),
+    ) as AuthorizedDevicePayload;
+    if (
+      typeof payload.deviceId !== "string" ||
+      !payload.deviceId ||
       payload.expiresAt <= Date.now()
     ) {
       return null;

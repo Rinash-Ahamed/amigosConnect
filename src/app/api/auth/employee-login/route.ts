@@ -1,6 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 import { isDeviceAllowed, normalizeAllowedDeviceIds } from "@/lib/auth/device-access";
 import {
@@ -10,9 +10,11 @@ import {
 } from "@/lib/auth/login-rate-limit";
 
 import {
+  AUTHORIZED_DEVICE_COOKIE,
   createEmployeeSession,
   EMPLOYEE_SESSION_COOKIE,
   isSecureRequest,
+  readAuthorizedDevice,
   STAFF_SESSION_TTL_SECONDS,
 } from "@/lib/auth/session";
 import { serverDb } from "@/lib/firebase/server";
@@ -44,8 +46,8 @@ function matchesDevelopmentPin(pin: string) {
   );
 }
 
-export async function POST(request: Request) {
-  let body: { pin?: unknown; deviceId?: unknown };
+export async function POST(request: NextRequest) {
+  let body: { pin?: unknown };
   try {
     body = await readJsonBody<typeof body>(request);
   } catch (error) {
@@ -55,9 +57,6 @@ export async function POST(request: Request) {
   if (typeof body.pin !== "string" || !/^\d{6}$/.test(body.pin)) {
     return NextResponse.json({ error: "PIN not recognized." }, { status: 401 });
   }
-  if (typeof body.deviceId === "string" && body.deviceId.length > 256) {
-    return NextResponse.json({ error: "Invalid request." }, { status: 400 });
-  }
   if (!serverDb || !process.env.AUTH_SECRET) {
     return NextResponse.json(
       { error: "Staff login is temporarily unavailable. Please try again." },
@@ -65,10 +64,43 @@ export async function POST(request: Request) {
     );
   }
 
+  const authorizedDevice = readAuthorizedDevice(
+    request.cookies.get(AUTHORIZED_DEVICE_COOKIE)?.value,
+  );
+  if (!authorizedDevice) {
+    return NextResponse.json(
+      { error: "This shop device has not been authorized by the Owner." },
+      { status: 401 },
+    );
+  }
+
+  try {
+    const settingsSnapshot = await serverDb.doc("amigos_store/appSettings").get();
+    const settingsData = (settingsSnapshot.exists
+      ? settingsSnapshot.data()?.value ?? null
+      : null) as Record<string, unknown> | null;
+    const allowedDevices = normalizeAllowedDeviceIds(settingsData?.deviceAllowlist);
+    if (!isDeviceAllowed(allowedDevices, authorizedDevice.deviceId)) {
+      return NextResponse.json(
+        { error: "This shop device has not been authorized by the Owner." },
+        { status: 401 },
+      );
+    }
+  } catch (error) {
+    console.error("Employee device authorization failed:", error);
+    return NextResponse.json(
+      { error: "Staff login is temporarily unavailable. Please try again." },
+      { status: 503 },
+    );
+  }
 
   let rateLimit;
   try {
-    rateLimit = await consumeLoginAttempt(request, "employee");
+    rateLimit = await consumeLoginAttempt(
+      request,
+      "employee",
+      authorizedDevice.deviceId,
+    );
   } catch (error) {
     console.error("Employee login rate limit failed:", error);
     return NextResponse.json(
@@ -98,16 +130,6 @@ export async function POST(request: Request) {
 
     const documentSnapshot = snapshot.docs[0];
     const employeeData = documentSnapshot.data() as Record<string, unknown>;
-    const deviceId = typeof body.deviceId === "string" ? body.deviceId.trim() : "";
-    const settingsSnapshot = await serverDb.doc("amigos_store/appSettings").get();
-    const settingsData = (settingsSnapshot.exists ? settingsSnapshot.data()?.value ?? null : null) as Record<string, unknown> | null;
-    const allowedDevices = normalizeAllowedDeviceIds(settingsData?.deviceAllowlist);
-    if (!isDeviceAllowed(allowedDevices, deviceId)) {
-      return NextResponse.json(
-        { error: "This device is not authorized for this employee account." },
-        { status: 401 },
-      );
-    }
     try {
       await resetLoginAttempts(rateLimit.key);
     } catch (error) {
@@ -120,7 +142,7 @@ export async function POST(request: Request) {
     const response = NextResponse.json({ employee });
     response.cookies.set(
       EMPLOYEE_SESSION_COOKIE,
-      createEmployeeSession(documentSnapshot.id),
+      createEmployeeSession(documentSnapshot.id, authorizedDevice.deviceId),
       {
         httpOnly: true,
         sameSite: "strict",

@@ -746,7 +746,7 @@ function PinPad({ value, onChange, maxLen = EMPLOYEE_PIN_LENGTH }) {
 }
 
 // ── Login Screen ──
-function LoginScreen({ onLogin, deviceId }) {
+function LoginScreen({ onLogin }) {
   const [mode, setMode] = useState(null);
   const [pin, setPin] = useState("");
   const [pass, setPass] = useState("");
@@ -798,7 +798,7 @@ function LoginScreen({ onLogin, deviceId }) {
       const response = await fetch("/api/auth/employee-login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pin: p, deviceId }),
+        body: JSON.stringify({ pin: p }),
       });
       const result = await response.json();
       if (!response.ok) {
@@ -813,7 +813,7 @@ function LoginScreen({ onLogin, deviceId }) {
     } finally {
       setPinChecking(false);
     }
-  }, [deviceId, onLogin, pinChecking]);
+  }, [onLogin, pinChecking]);
 
   const handlePinChange = (nextPin) => {
     setPin(nextPin);
@@ -1837,8 +1837,32 @@ function OwnerDashboard({ role, onLogout, deviceId }) {
   };
 
   const saveDeviceAllowlist = async () => {
-    const normalized = normalizeAllowedDeviceIds(deviceAllowlistInput);
-    await updateSettings({ deviceAllowlist: normalized });
+    const normalized = normalizeAllowedDeviceIds([
+      ...normalizeAllowedDeviceIds(deviceAllowlistInput),
+      deviceId,
+    ]);
+    setDeviceAllowlistInput(normalized.join("\n"));
+    if (!await updateSettings({ deviceAllowlist: normalized })) return;
+
+    try {
+      const response = await fetch("/api/auth/device-authorization", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceId }),
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        showToast(result.error || "Could not authorize this device.", "error");
+        return;
+      }
+      showToast(
+        result.authorized
+          ? "Device list saved. This device is authorized."
+          : "Device list saved. This device is not authorized.",
+      );
+    } catch {
+      showToast("Device list saved, but this device could not be authorized.", "error");
+    }
   };
 
   const changeStaffPassword = async (event) => {
@@ -2713,15 +2737,15 @@ function OwnerDashboard({ role, onLogout, deviceId }) {
             <h3 style={{fontSize:20,marginBottom:20,textAlign:"center"}}>
               {isOwner ? "Owner" : "Manager"} Account
             </h3>
-            {deviceId && (
+            {isOwner && deviceId && (
               <div style={{fontSize:11,color:"var(--muted)",textAlign:"center",wordBreak:"break-all",padding:"10px 12px",borderRadius:10,border:"1px solid var(--border)",background:"rgba(255,255,255,0.03)",marginBottom:12}}>
                 Current Device ID: <span style={{fontWeight:600,color:"var(--text-2)"}}>{deviceId}</span>
               </div>
             )}
-            <div className="card" style={{marginBottom:12}}>
+            {isOwner && <div className="card" style={{marginBottom:12}}>
               <h4 style={{fontSize:16,marginBottom:6}}>Shop Device Allowlist</h4>
               <p style={{color:"var(--muted)",fontSize:13,marginBottom:12}}>
-                Add the device IDs that are allowed for all staff logins at this shop. Leave blank to allow any device.
+                Add shop device IDs one per line. Saving the list securely authorizes this browser when its current ID is included. An empty list blocks employee login.
               </p>
               <textarea
                 className="input"
@@ -2732,9 +2756,9 @@ function OwnerDashboard({ role, onLogout, deviceId }) {
                 style={{minHeight:100, resize:"vertical"}}
               />
               <button type="button" className="btn btn-gold" style={{width:"100%",marginTop:10}} onClick={() => { void saveDeviceAllowlist(); }}>
-                Save Device Allowlist
+                Save and Authorize Device
               </button>
-            </div>
+            </div>}
             <form className="card" onSubmit={changeStaffPassword}>
               <h4 style={{fontSize:16,marginBottom:6}}>Change Password</h4>
               <p style={{color:"var(--muted)",fontSize:13,marginBottom:16}}>
@@ -3237,10 +3261,10 @@ export function AppClient() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     const storedDeviceId = window.localStorage.getItem("amigos_device_id");
-    if (storedDeviceId) {
+    if (storedDeviceId && /^[A-Za-z0-9._:-]{8,128}$/.test(storedDeviceId)) {
       setDeviceId(storedDeviceId);
     } else {
-      const generated = window.crypto?.randomUUID?.() || `${window.navigator.userAgentData?.brands?.[0]?.brand || "device"}-${Date.now().toString(36)}`;
+      const generated = window.crypto.randomUUID();
       window.localStorage.setItem("amigos_device_id", generated);
       setDeviceId(generated);
     }
@@ -3374,7 +3398,7 @@ export function AppClient() {
     <>
       <ToastHost />
       {!session
-        ? <LoginScreen onLogin={handleLogin} deviceId={deviceId} />
+        ? <LoginScreen onLogin={handleLogin} />
         : session.role === "employee"
           ? <EmployeeView employee={session.employee} onLogout={handleLogout} onUpdateEmployee={handleUpdateEmployee} />
           : <OwnerDashboard role={session.role} onLogout={handleLogout} deviceId={deviceId} />}
