@@ -28,40 +28,28 @@ application.
    npm install
    ```
 
-2. Copy `.env.example` to `.env.local` and fill in the public Firebase web-app
-   configuration:
-
-   ```dotenv
-   NEXT_PUBLIC_FIREBASE_API_KEY=
-   NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=
-   NEXT_PUBLIC_FIREBASE_PROJECT_ID=
-   NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=
-   NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=
-   NEXT_PUBLIC_FIREBASE_APP_ID=
-   ```
-
-   Add the server-only Firestore Admin credentials from a Firebase service
-   account. Keep the private key on one line with escaped newlines:
+2. Copy `.env.example` to `.env.local` and add the server-only Firestore Admin
+   credentials and session secret. Keep the private key on one line with
+   escaped newlines:
 
    ```dotenv
    FIREBASE_PROJECT_ID=
    FIREBASE_CLIENT_EMAIL=
    FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n"
-   ```
-
-   Also configure the server-only development login override and session secret:
-
-   ```dotenv
-   DEV_PASSWORD=
    AUTH_SECRET=
+   DEV_PASSWORD=
+   DEV_EMPLOYEE_PIN=
    ```
 
    `DEV_PASSWORD` can log into either staff role only while running `next dev`.
+   `DEV_EMPLOYEE_PIN` must contain exactly six digits and logs into the first
+   available employee account only while running `next dev`.
    Use it to create the initial Owner and Manager passwords from each role's
    Account screen. The role passwords are stored as salted hashes in
    separate `amigos_store/ownerAuth` and `amigos_store/managerAuth` documents
    in Firestore. Use a long random value for
-   `AUTH_SECRET`. Neither server-only value may use a `NEXT_PUBLIC_` prefix.
+   `AUTH_SECRET`. All Firestore access goes through authenticated server routes,
+   so no `NEXT_PUBLIC_FIREBASE_*` variables are required.
 
 3. Start development:
 
@@ -109,7 +97,7 @@ src/
 
 Public routes use a dedicated layout so their fashion design and animations do
 not leak into the Connect interface. `AppClient` is the Connect browser boundary
-because that portal uses employee session storage, Firestore subscriptions,
+because that portal uses employee session storage, authenticated data polling,
 timers, install prompts, and interactive forms. Owner and Manager passwords are
 validated by API routes against salted hashes in Firestore, and staff sessions
 use signed HTTP-only cookies.

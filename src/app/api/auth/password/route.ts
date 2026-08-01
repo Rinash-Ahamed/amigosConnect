@@ -52,11 +52,10 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const ownerResettingManager =
-    session.role === "owner" && targetRole === "manager";
+  const ownerResettingPassword = session.role === "owner";
 
   if (
-    !ownerResettingManager &&
+    !ownerResettingPassword &&
     typeof body.currentPassword !== "string"
   ) {
     return NextResponse.json(
@@ -66,7 +65,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    if (ownerResettingManager) {
+    if (ownerResettingPassword) {
       await resetStaffPassword(targetRole, body.newPassword);
       return NextResponse.json({ success: true });
     }

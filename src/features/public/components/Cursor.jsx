@@ -8,15 +8,11 @@ export default function Cursor() {
   const raf = useRef(null)
 
   useEffect(() => {
+    if (window.matchMedia('(pointer: coarse)').matches) return
+
     const dot = dotRef.current
     const follower = followerRef.current
     if (!dot || !follower) return
-
-    const onMove = (e) => {
-      pos.current = { x: e.clientX, y: e.clientY }
-      dot.style.left = `${e.clientX}px`
-      dot.style.top = `${e.clientY}px`
-    }
 
     const lerp = (a, b, t) => a + (b - a) * t
 
@@ -25,7 +21,17 @@ export default function Cursor() {
       followerPos.current.y = lerp(followerPos.current.y, pos.current.y, 0.12)
       follower.style.left = `${followerPos.current.x}px`
       follower.style.top = `${followerPos.current.y}px`
-      raf.current = requestAnimationFrame(animate)
+      const stillMoving =
+        Math.abs(followerPos.current.x - pos.current.x) > 0.1 ||
+        Math.abs(followerPos.current.y - pos.current.y) > 0.1
+      raf.current = stillMoving ? requestAnimationFrame(animate) : null
+    }
+
+    const onMove = (e) => {
+      pos.current = { x: e.clientX, y: e.clientY }
+      dot.style.left = `${e.clientX}px`
+      dot.style.top = `${e.clientY}px`
+      if (raf.current === null) raf.current = requestAnimationFrame(animate)
     }
 
     const onHoverEnter = () => {
@@ -37,8 +43,7 @@ export default function Cursor() {
       follower.classList.remove('cursor--hover')
     }
 
-    window.addEventListener('mousemove', onMove)
-    raf.current = requestAnimationFrame(animate)
+    window.addEventListener('mousemove', onMove, { passive: true })
 
     const interactables = document.querySelectorAll('a, button, [data-cursor]')
     interactables.forEach(el => {
@@ -48,7 +53,11 @@ export default function Cursor() {
 
     return () => {
       window.removeEventListener('mousemove', onMove)
-      cancelAnimationFrame(raf.current)
+      if (raf.current !== null) cancelAnimationFrame(raf.current)
+      interactables.forEach(el => {
+        el.removeEventListener('mouseenter', onHoverEnter)
+        el.removeEventListener('mouseleave', onHoverLeave)
+      })
     }
   }, [])
 

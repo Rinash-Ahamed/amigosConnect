@@ -1,80 +1,105 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from "react";
+import { useState, useEffect, useCallback, useMemo, lazy, Suspense, createContext, useContext } from "react";
 import { 
   CheckCircle, StopCircle, User, Briefcase, Calendar, 
   Download, Clock, Check, X, Inbox, ClipboardList, IndianRupee, 
   Users, Settings, LayoutDashboard, Timer, Phone, Mail, MapPin, 
   Edit2, Trash2, Flag, Eye, EyeOff, ChevronLeft, ChevronRight
 } from "lucide-react";
-import { doc, getDoc, setDoc, collection, getDocs, deleteDoc, onSnapshot } from "firebase/firestore";
+const dashboardSubscribers = new Map();
+let dashboardPollTimer = null;
+let pendingDashboardRefresh = null;
 
-import { db, isFirebaseConfigured } from "@/lib/firebase/client";
+async function requestData(params) {
+  const search = new URLSearchParams(params);
+  const response = await fetch(`/api/data?${search}`, { cache: "no-store" });
+  if (!response.ok) throw new Error(`Data request failed with ${response.status}.`);
+  return (await response.json()).data;
+}
+
+async function mutateData(operation, collectionName, id, data = {}) {
+  const response = await fetch("/api/data", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ operation, collection: collectionName, id, data }),
+  });
+  if (!response.ok) throw new Error(`Data update failed with ${response.status}.`);
+  return true;
+}
+
+function refreshDashboardSnapshot() {
+  if (pendingDashboardRefresh) return pendingDashboardRefresh;
+  pendingDashboardRefresh = fetch("/api/data/snapshot", { cache: "no-store" })
+    .then(async response => {
+      if (!response.ok) throw new Error(`Dashboard sync failed with ${response.status}.`);
+      const snapshot = await response.json();
+      dashboardSubscribers.forEach((callbacks, key) => {
+        callbacks.forEach(callback => callback(snapshot[key] ?? null));
+      });
+    })
+    .catch(error => console.error("Dashboard sync error:", error))
+    .finally(() => {
+      pendingDashboardRefresh = null;
+    });
+  return pendingDashboardRefresh;
+}
 
 // ── Storage helpers ──
 const storage = {
   async get(key) {
-    if (!db) return undefined;
     try {
-      if (key === "appSettings") {
-        const docRef = doc(db, "amigos_store", key);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          const data = docSnap.data().value;
-          return data;
-        }
-        return null;
-      } else {
-        const snapshot = await getDocs(collection(db, key));
-        return snapshot.docs.map(d => d.data());
-      }
+      return await requestData({ collection: key });
     } catch (e) {
-      console.error(`Firebase GET error for ${key}:`, e);
+      console.error(`Data GET error for ${key}:`, e);
+      return undefined;
+    }
+  },
+  async getById(key, id) {
+    try {
+      return await requestData({ collection: key, id });
+    } catch (e) {
+      console.error(`Data GET error for ${key}/${id}:`, e);
+      return undefined;
+    }
+  },
+  async getWhere(key, field, value) {
+    try {
+      return await requestData({ collection: key, field, value });
+    } catch (e) {
+      console.error(`Data QUERY error for ${key}:`, e);
       return undefined;
     }
   },
   async set(key, val) {
-    if (!db) return false;
     try {
-      if (key === "appSettings") {
-        await setDoc(doc(db, "amigos_store", key), { value: val }, { merge: true });
-        return true;
-      } else {
-        console.warn(`storage.set called on collection ${key}. Use add/update/remove instead.`);
-        return false;
-      }
+      return await mutateData("set", key, "", val);
     } catch (e) {
-      console.error("Firebase SET error:", e);
+      console.error("Data SET error:", e);
       return false;
     }
   },
   async add(key, item) {
-    if (!db) return false;
     try {
-      await setDoc(doc(db, key, item.id), item);
-      return true;
+      return await mutateData("add", key, item.id, item);
     } catch (e) {
-      console.error(`Firebase ADD error:`, e);
+      console.error("Data ADD error:", e);
       return false;
     }
   },
   async update(key, id, updates) {
-    if (!db) return false;
     try {
-      await setDoc(doc(db, key, id), updates, { merge: true });
-      return true;
+      return await mutateData("update", key, id, updates);
     } catch (e) {
-      console.error(`Firebase UPDATE error:`, e);
+      console.error("Data UPDATE error:", e);
       return false;
     }
   },
   async remove(key, id) {
-    if (!db) return false;
     try {
-      await deleteDoc(doc(db, key, id));
-      return true;
+      return await mutateData("remove", key, id);
     } catch (e) {
-      console.error(`Firebase REMOVE error:`, e);
+      console.error("Data REMOVE error:", e);
       return false;
     }
   },
@@ -90,20 +115,24 @@ const storage = {
     }
   },
   subscribe(key, callback) {
-    if (!db) {
-      callback(null);
-      return () => {};
+    if (!dashboardSubscribers.has(key)) {
+      dashboardSubscribers.set(key, new Set());
     }
-    if (key === "appSettings") {
-      return onSnapshot(doc(db, "amigos_store", key), (docSnap) => {
-        const data = docSnap.exists() ? docSnap.data().value : null;
-        callback(data);
-      }, (e) => console.error(`Firebase SUBSCRIBE error for ${key}:`, e));
-    } else {
-      return onSnapshot(collection(db, key), (snapshot) => {
-        callback(snapshot.docs.map(d => d.data()));
-      }, (e) => console.error(`Firebase SUBSCRIBE error for ${key}:`, e));
+    dashboardSubscribers.get(key).add(callback);
+    queueMicrotask(() => void refreshDashboardSnapshot());
+    if (!dashboardPollTimer) {
+      dashboardPollTimer = window.setInterval(
+        () => void refreshDashboardSnapshot(),
+        15000,
+      );
     }
+    return () => {
+      dashboardSubscribers.get(key)?.delete(callback);
+      if ([...dashboardSubscribers.values()].every(callbacks => callbacks.size === 0)) {
+        window.clearInterval(dashboardPollTimer);
+        dashboardPollTimer = null;
+      }
+    };
   }
 };
 
@@ -113,6 +142,63 @@ const SESSION_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const EMPLOYEE_PIN_LENGTH = 6;
 const DEFAULT_AUTO_CLOCK_OUT_HOUR_IST = 23;
 const DEFAULT_AUTO_CLOCK_OUT_MINUTE_IST = 0;
+const ClockContext = createContext(null);
+
+function ClockProvider({ children }) {
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    const interval = window.setInterval(() => setNow(new Date()), 1000);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  return <ClockContext.Provider value={now}>{children}</ClockContext.Provider>;
+}
+
+function LiveClock({ style }) {
+  const now = useContext(ClockContext) || new Date();
+  return (
+    <div style={style}>
+      {now.toLocaleTimeString("en-US", {
+        hour: "numeric",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: true,
+      })}
+    </div>
+  );
+}
+
+function LiveDate({ style }) {
+  const now = useContext(ClockContext) || new Date();
+  return (
+    <p style={style}>
+      {now.toLocaleDateString("en-GB", {
+        weekday: "long",
+        day: "numeric",
+        month: "long",
+      })}
+    </p>
+  );
+}
+
+function ShiftElapsed({ startedAt, style, hourlyRate, showEarnings = false }) {
+  const now = useContext(ClockContext) || new Date();
+  const elapsed = Math.max(0, Math.floor((now - new Date(startedAt)) / 1000));
+  const elapsedText = `${String(Math.floor(elapsed / 3600)).padStart(2, "0")}:${String(Math.floor((elapsed % 3600) / 60)).padStart(2, "0")}:${String(elapsed % 60).padStart(2, "0")}`;
+
+  return (
+    <>
+      <div style={style}>{elapsedText}</div>
+      {showEarnings && (
+        <div style={{fontSize:12,color:"var(--muted)",marginBottom:8}}>
+          â‚¹{((elapsed / 3600) * (hourlyRate || 0)).toFixed(2)} earned
+        </div>
+      )}
+    </>
+  );
+}
+
 const todayIstDate = () => new Date(Date.now() + IST_OFFSET_MS).toISOString().slice(0, 10);
 const defaultSettings = () => ({
   leavesEnabled: true,
@@ -549,10 +635,8 @@ function LoginScreen({ onLogin }) {
   const [mode, setMode] = useState(null);
   const [pin, setPin] = useState("");
   const [pass, setPass] = useState("");
-  const [employees, setEmployees] = useState([]);
   const [error, setError] = useState("");
-  const [employeesLoading, setEmployeesLoading] = useState(true);
-  const [employeesError, setEmployeesError] = useState("");
+  const [pinChecking, setPinChecking] = useState(false);
   const [installPrompt, setInstallPrompt] = useState(null);
   const [isIOS, setIsIOS] = useState(false);
   const [isMobileDevice, setIsMobileDevice] = useState(false);
@@ -591,56 +675,34 @@ function LoginScreen({ onLogin }) {
     return () => window.removeEventListener('beforeinstallprompt', handleInstallPrompt);
   }, []);
 
-  const loadEmployees = useCallback(async () => {
-    setEmployeesLoading(true);
-    setEmployeesError("");
-
-    if (!isFirebaseConfigured) {
-      setEmployees([]);
-      setEmployeesError("Staff login is temporarily unavailable. Please try again.");
-      setEmployeesLoading(false);
-      return;
-    }
-
-    let timeoutId;
+  const tryEmployeePin = useCallback(async (p) => {
+    if (p.length < EMPLOYEE_PIN_LENGTH || pinChecking) return;
+    setPinChecking(true);
+    setError("");
     try {
-      const emps = await Promise.race([
-        storage.get("employees"),
-        new Promise((_, reject) => {
-          timeoutId = window.setTimeout(
-            () => reject(new Error("Employee lookup timed out.")),
-            6000,
-          );
-        }),
-      ]);
-
-      if (!Array.isArray(emps)) {
-        throw new Error("Employee data is unavailable.");
+      const response = await fetch("/api/auth/employee-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin: p }),
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        setError(result.error || "PIN not recognized. Check your PIN or contact the Owner.");
+        setPin("");
+        return;
       }
-      setEmployees(emps);
+      onLogin("employee", result.employee);
     } catch {
-      setEmployees([]);
-      setEmployeesError("Staff login is temporarily unavailable. Please try again.");
+      setError("Staff login is temporarily unavailable. Please try again.");
+      setPin("");
     } finally {
-      window.clearTimeout(timeoutId);
-      setEmployeesLoading(false);
+      setPinChecking(false);
     }
-  }, []);
-
-  useEffect(() => {
-    void loadEmployees();
-  }, [loadEmployees]);
-
-  const tryEmployeePin = useCallback((p) => {
-    if (p.length < EMPLOYEE_PIN_LENGTH) return;
-    const emp = employees.find(e => e.pin === p);
-    if (emp) { setError(""); onLogin("employee", emp); }
-    else { setError("PIN not recognized. Check your PIN or contact the Owner."); setPin(""); }
-  }, [employees, onLogin]);
+  }, [onLogin, pinChecking]);
 
   const handlePinChange = (nextPin) => {
     setPin(nextPin);
-    if (nextPin.length === EMPLOYEE_PIN_LENGTH) tryEmployeePin(nextPin);
+    if (nextPin.length === EMPLOYEE_PIN_LENGTH) void tryEmployeePin(nextPin);
   };
 
   const handleInstall = async () => {
@@ -703,25 +765,9 @@ function LoginScreen({ onLogin }) {
       {!mode ? (
         <div className="fade-up" style={{width:"100%",maxWidth:320,display:"flex",flexDirection:"column",gap:12}}>
           <button className="btn btn-gold" style={{padding:"17px",fontSize:15,borderRadius:13,width:"100%"}}
-            disabled={!isFirebaseConfigured || employeesLoading || Boolean(employeesError) || employees.length === 0}
             onClick={() => { setMode("employee"); setError(""); }}>
-            <User size={18} /> {employeesLoading ? "Loading Staff..." : employees.length === 0 ? "No Staff Accounts" : "Employee Login"}
+            <User size={18} /> Employee Login
           </button>
-          {!employeesLoading && employeesError && (
-            <p style={{color:"var(--amber)",fontSize:12,textAlign:"center",lineHeight:1.5}}>
-              {employeesError}
-            </p>
-          )}
-          {!employeesLoading && employeesError && isFirebaseConfigured && (
-            <button className="btn btn-ghost btn-sm" type="button" style={{width:"100%"}} onClick={loadEmployees}>
-              Retry Staff Load
-            </button>
-          )}
-          {!employeesLoading && !employeesError && employees.length === 0 && (
-            <p style={{color:"var(--muted)",fontSize:12,textAlign:"center",lineHeight:1.5}}>
-              No staff accounts are available. Please contact the Owner.
-            </p>
-          )}
           <button className="btn btn-outline" style={{padding:"17px",fontSize:15,borderRadius:13,width:"100%"}}
             onClick={() => { setMode("owner"); setError(""); }}>
             <Briefcase size={18} /> Owner Login
@@ -807,7 +853,6 @@ function LoginScreen({ onLogin }) {
 function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
   const [logs, setLogs] = useState([]);
   const [active, setActive] = useState(null);
-  const [now, setNow] = useState(new Date());
   const [view, setView] = useState("home");
   const [leaves, setLeaves] = useState([]);
   const [leaveForm, setLeaveForm] = useState({ from:"", to:"", type:"Casual", reason:"" });
@@ -833,13 +878,13 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
   const saveProfile = async () => {
     if (profileSaving) return;
     setProfileSaving(true);
-    const allEmps = await storage.get("employees");
-    if (!Array.isArray(allEmps)) {
+    const storedEmployee = await storage.getById("employees", employee.id);
+    if (storedEmployee === undefined) {
       alert("Could not load staff data. Please check your connection and try again.");
       setProfileSaving(false);
       return;
     }
-    if (!allEmps.some(e => e.id === employee.id)) {
+    if (!storedEmployee) {
       alert("Your staff profile was not found. Please ask the owner to refresh staff data.");
       setProfileSaving(false);
       return;
@@ -857,29 +902,27 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
   };
 
   useEffect(() => {
-    const iv = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(iv);
-  }, []);
-
-  useEffect(() => {
     (async () => {
-      const st = { ...defaultSettings(), ...((await storage.get("appSettings")) || {}) };
-      const all = (await storage.get("timelogs")) || [];
-      const autoClosed = applyAutoClockOut(all, st);
+      const [storedSettings, employeeLogs, employeeLeaves, employeeAdvances] = await Promise.all([
+        storage.get("appSettings"),
+        storage.getWhere("timelogs", "employeeId", employee.id),
+        storage.getWhere("leaves", "employeeId", employee.id),
+        storage.getWhere("advances", "employeeId", employee.id),
+      ]);
+      const st = { ...defaultSettings(), ...(storedSettings || {}) };
+      const autoClosed = applyAutoClockOut(employeeLogs || [], st);
       if (autoClosed.changed) {
         await Promise.all(autoClosed.closed.map(l => storage.update("timelogs", l.id, {
           clockOut: l.clockOut, breaks: l.breaks,
           autoClockedOut: l.autoClockedOut, autoClockOutReason: l.autoClockOutReason
         })));
       }
-      const mine = autoClosed.logs.filter(l => l.employeeId === employee.id);
+      const mine = autoClosed.logs;
       setLogs(mine);
       const open = mine.find(l => !l.clockOut);
       setActive(open || null);
-      const allLeaves = (await storage.get("leaves")) || [];
-      setLeaves(allLeaves.filter(l => l.employeeId === employee.id));
-      const allAdvances = (await storage.get("advances")) || [];
-      setAdvances(allAdvances.filter(a => a.employeeId === employee.id));
+      setLeaves(employeeLeaves || []);
+      setAdvances(employeeAdvances || []);
       
       setSettings(st);
       if (st.leavesEnabled === false) {
@@ -892,7 +935,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
     if (!window.confirm("Are you sure you want to clock in?")) return;
     setClocking(true);
     try {
-      const allLeaves = (await storage.get("leaves")) || [];
+      const allLeaves = (await storage.getWhere("leaves", "employeeId", employee.id)) || [];
       const today = todayIstDate();
       const onLeave = allLeaves.find(l =>
         l.employeeId === employee.id && l.status === "approved" &&
@@ -997,7 +1040,6 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
   }), [logs]);
 
   const hrs = useMemo(() => totalHours(weekLogs.filter(l => l.clockOut)), [weekLogs]);
-  const elapsed = active ? Math.floor((now - new Date(active.clockIn)) / 1000) : 0;
 
   const weekHoursData = useMemo(() => {
     const weekStart = new Date(); weekStart.setDate(weekStart.getDate() - weekStart.getDay()); weekStart.setHours(0,0,0,0);
@@ -1020,8 +1062,6 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
     });
     return data;
   }, [weekLogs]);
-
-  const elapsedStr = `${String(Math.floor(elapsed/3600)).padStart(2,"0")}:${String(Math.floor((elapsed%3600)/60)).padStart(2,"0")}:${String(elapsed%60).padStart(2,"0")}`;
 
   const leaveTypeColor = useCallback((t) => ({Casual:"tag-blue", Sick:"tag-red", Emergency:"tag-amber"}[t] || "tag-muted"), []);
   const leaveStatusColor = useCallback((s) => ({pending:"tag-amber", approved:"tag-green", rejected:"tag-red"}[s] || "tag-muted"), []);
@@ -1083,20 +1123,15 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
               animation: active ? "pulse-green 2.4s infinite" : "none",
               transition:"all .3s"
             }}>
-              <p style={{color:"var(--muted)",fontSize:12,letterSpacing:".1em",textTransform:"uppercase",marginBottom:6}}>
-                {new Date().toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long"})}
-              </p>
-              <div style={{fontSize:52,fontFamily:"var(--font-sans), Inter, system-ui, sans-serif",fontWeight:600,color:"var(--text)",marginBottom:4,letterSpacing:"-0.03em"}}>
-                {now.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit",second:"2-digit", hour12: true})}
-              </div>
+              <ClockProvider>
+              <LiveDate style={{color:"var(--muted)",fontSize:12,letterSpacing:".1em",textTransform:"uppercase",marginBottom:6}} />
+              <LiveClock style={{fontSize:52,fontFamily:"var(--font-sans), Inter, system-ui, sans-serif",fontWeight:600,color:"var(--text)",marginBottom:4,letterSpacing:"-0.03em"}} />
               {active && (
                 <div style={{marginBottom:18}}>
                   <p style={{color:"var(--muted)",fontSize:12,marginBottom:4}}>
                     Shift started <strong style={{color:"var(--text-2)"}}>{fmtDate(active.clockIn)} {fmt(active.clockIn)}</strong>
                   </p>
-                  <p style={{fontSize:30,color:"var(--success)",fontWeight:600,fontFamily:"var(--font-sans), Inter, system-ui, sans-serif",letterSpacing:"0.02em"}}>
-                    {elapsedStr}
-                  </p>
+                  <ShiftElapsed startedAt={active.clockIn} style={{fontSize:30,color:"var(--success)",fontWeight:600,fontFamily:"var(--font-sans), Inter, system-ui, sans-serif",letterSpacing:"0.02em"}} />
                 </div>
               )}
               {!active ? (
@@ -1110,6 +1145,7 @@ function EmployeeView({ employee, onLogout, onUpdateEmployee }) {
                   </button>
                 </div>
               )}
+              </ClockProvider>
             </div>
 
             {/* Stats row */}
@@ -1335,7 +1371,6 @@ function OwnerDashboard({ role, onLogout }) {
   const [advances, setAdvances] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [now, setNow] = useState(new Date());
   const [newBranch, setNewBranch] = useState("");
   const [editingBranch, setEditingBranch] = useState(null);
   const [editBranchValue, setEditBranchValue] = useState("");
@@ -1361,11 +1396,6 @@ function OwnerDashboard({ role, onLogout }) {
     newPassword: false,
     confirmPassword: false,
   });
-
-  useEffect(() => {
-    const iv = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(iv);
-  }, []);
 
   useEffect(() => {
     let currentSettings = defaultSettings();
@@ -1505,20 +1535,54 @@ function OwnerDashboard({ role, onLogout }) {
   const paidAdvances = useMemo(() => fAdvances.filter(a => a.status === "paid"), [fAdvances]);
   const rejectedAdvances = useMemo(() => fAdvances.filter(a => a.status === "rejected"), [fAdvances]);
 
-  const getTsLogs = useCallback((empId) => fLogs.filter(l => {
-    const d = new Date(l.clockIn);
-    return l.employeeId === empId && d >= tsStart && d < tsEnd;
-  }), [fLogs, tsStart, tsEnd]);
+  const tsLogsByEmployee = useMemo(() => {
+    const grouped = new Map();
+    fLogs.forEach(log => {
+      const date = new Date(log.clockIn);
+      if (date < tsStart || date >= tsEnd) return;
+      const employeeLogs = grouped.get(log.employeeId) || [];
+      employeeLogs.push(log);
+      grouped.set(log.employeeId, employeeLogs);
+    });
+    return grouped;
+  }, [fLogs, tsStart, tsEnd]);
 
-  const getPrLogs = useCallback((empId) => fLogs.filter(l => {
-    const d = new Date(l.clockIn);
-    return l.employeeId === empId && d >= prStart && d < prEnd;
-  }), [fLogs, prStart, prEnd]);
+  const prLogsByEmployee = useMemo(() => {
+    const grouped = new Map();
+    fLogs.forEach(log => {
+      const date = new Date(log.clockIn);
+      if (date < prStart || date >= prEnd) return;
+      const employeeLogs = grouped.get(log.employeeId) || [];
+      employeeLogs.push(log);
+      grouped.set(log.employeeId, employeeLogs);
+    });
+    return grouped;
+  }, [fLogs, prStart, prEnd]);
 
-  const getPrAdvances = useCallback((empId) => fAdvances.filter(a => {
-    const d = new Date(a.paidAt || a.appliedAt);
-    return a.employeeId === empId && a.status === "paid" && d >= prStart && d < prEnd;
-  }), [fAdvances, prStart, prEnd]);
+  const prAdvancesByEmployee = useMemo(() => {
+    const grouped = new Map();
+    fAdvances.forEach(advance => {
+      const date = new Date(advance.paidAt || advance.appliedAt);
+      if (advance.status !== "paid" || date < prStart || date >= prEnd) return;
+      const employeeAdvances = grouped.get(advance.employeeId) || [];
+      employeeAdvances.push(advance);
+      grouped.set(advance.employeeId, employeeAdvances);
+    });
+    return grouped;
+  }, [fAdvances, prStart, prEnd]);
+
+  const getTsLogs = useCallback(
+    employeeId => tsLogsByEmployee.get(employeeId) || [],
+    [tsLogsByEmployee],
+  );
+  const getPrLogs = useCallback(
+    employeeId => prLogsByEmployee.get(employeeId) || [],
+    [prLogsByEmployee],
+  );
+  const getPrAdvances = useCallback(
+    employeeId => prAdvancesByEmployee.get(employeeId) || [],
+    [prAdvancesByEmployee],
+  );
 
   const deleteLog = async (id) => {
     if (!window.confirm("Are you sure you want to delete this timesheet record?")) return;
@@ -1658,11 +1722,9 @@ function OwnerDashboard({ role, onLogout }) {
     if (!nb) { setEditingBranch(null); return; }
     if (nb !== oldName && settings.branches?.includes(nb)) { alert("Branch already exists!"); return; }
     
-    const latestEmployees = await storage.get("employees");
-    if (!Array.isArray(latestEmployees)) { alert("Could not load staff data. Please check your connection and try again."); return; }
     const updatedBranches = settings.branches.map(b => b === oldName ? nb : b);
-    const updatedEmployees = latestEmployees.map(e => e.branch === oldName ? { ...e, branch: nb } : e);
-    const changedEmps = latestEmployees.filter(e => e.branch === oldName);
+    const updatedEmployees = employees.map(e => e.branch === oldName ? { ...e, branch: nb } : e);
+    const changedEmps = employees.filter(e => e.branch === oldName);
     const employeeResults = await Promise.all(changedEmps.map(e => storage.update("employees", e.id, { branch: nb })));
     if (employeeResults.some(result => !result) || !await updateSettings({ branches: updatedBranches })) {
       alert("The branch could not be fully updated. Refresh and try again.");
@@ -1676,11 +1738,9 @@ function OwnerDashboard({ role, onLogout }) {
   const deleteBranch = async (branchName) => {
     if (!window.confirm(`Delete branch "${branchName}"?\n\nEmployees in this branch will be unassigned.`)) return;
     
-    const latestEmployees = await storage.get("employees");
-    if (!Array.isArray(latestEmployees)) { alert("Could not load staff data. Please check your connection and try again."); return; }
     const updatedBranches = settings.branches.filter(b => b !== branchName);
-    const updatedEmployees = latestEmployees.map(e => e.branch === branchName ? { ...e, branch: "" } : e);
-    const changedEmps = latestEmployees.filter(e => e.branch === branchName);
+    const updatedEmployees = employees.map(e => e.branch === branchName ? { ...e, branch: "" } : e);
+    const changedEmps = employees.filter(e => e.branch === branchName);
     const employeeResults = await Promise.all(changedEmps.map(e => storage.update("employees", e.id, { branch: "" })));
     if (employeeResults.some(result => !result) || !await updateSettings({ branches: updatedBranches })) {
       alert("The branch could not be fully removed. Refresh and try again.");
@@ -1690,7 +1750,7 @@ function OwnerDashboard({ role, onLogout }) {
     if (selectedBranch === branchName) setSelectedBranch("All");
   };
 
-  const calculatePayrollDetails = (logs, employee) => {
+  const calculatePayrollDetails = useCallback((logs, employee) => {
     const details = {
       totalHours: 0,
       regularHours: 0,
@@ -1728,7 +1788,7 @@ function OwnerDashboard({ role, onLogout }) {
     }
     details.grossPay = details.totalHours * hourlyRate;
     return details;
-  };
+  }, []);
 
   const exportTimesheetsCSV = () => {
     const rows = [["Employee","Branch","Date","Clock In","Clock Out","Hours"]];
@@ -1742,11 +1802,11 @@ function OwnerDashboard({ role, onLogout }) {
     downloadCSV(`timesheets-${tsMode}-${timestamp}.csv`, rows);
   };
 
-  const prEmployees = fEmployees.filter(emp => {
+  const prEmployees = useMemo(() => fEmployees.filter(emp => {
     const matchCycle = (emp.paymentCycle || "Weekly").toLowerCase() === prMode;
     const matchSearch = !payrollSearch.trim() || emp.name.toLowerCase().includes(payrollSearch.trim().toLowerCase());
     return matchCycle && matchSearch;
-  });
+  }), [fEmployees, payrollSearch, prMode]);
 
  const exportPayrollCSV = () => {
   // 13 Columns defined here
@@ -1842,10 +1902,23 @@ function OwnerDashboard({ role, onLogout }) {
     downloadCSV(`staff-info-${timestamp}.csv`, rows);
   };
 
-  const totalPrGross = prEmployees.reduce((s,emp) => s + calculatePayrollDetails(getPrLogs(emp.id).filter(l=>l.clockOut), emp).grossPay, 0);
-  const totalPrAdvance = prEmployees.reduce((s,emp) => s + getPrAdvances(emp.id).reduce((sum, a) => sum + a.amount, 0), 0);
-  const totalPrPay = totalPrGross - totalPrAdvance;
-  const totalPrHrs = prEmployees.reduce((s,emp) => s + totalHours(getPrLogs(emp.id).filter(l=>l.clockOut)), 0);
+  const { totalPrGross, totalPrAdvance, totalPrPay, totalPrHrs } = useMemo(() => {
+    let gross = 0;
+    let advance = 0;
+    let hours = 0;
+    prEmployees.forEach(employee => {
+      const completedLogs = getPrLogs(employee.id).filter(log => log.clockOut);
+      gross += calculatePayrollDetails(completedLogs, employee).grossPay;
+      advance += getPrAdvances(employee.id).reduce((sum, item) => sum + item.amount, 0);
+      hours += totalHours(completedLogs);
+    });
+    return {
+      totalPrGross: gross,
+      totalPrAdvance: advance,
+      totalPrPay: gross - advance,
+      totalPrHrs: hours,
+    };
+  }, [calculatePayrollDetails, getPrAdvances, getPrLogs, prEmployees]);
 
   const tabs = [
     {id:"overview",  label:"Dashboard",   icon:<LayoutDashboard size={14} />},
@@ -2004,6 +2077,7 @@ function OwnerDashboard({ role, onLogout }) {
 
         {/* ── LIVE ATTENDANCE ── */}
         {tab === "overview" && (
+          <ClockProvider>
           <div className="fade-up">
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20,flexWrap:"wrap",gap:12}}>
               <div style={{display:"flex",alignItems:"center",gap:16,flexWrap:"wrap"}}>
@@ -2019,13 +2093,11 @@ function OwnerDashboard({ role, onLogout }) {
                   </button>
                 )}
               </div>
-              <div style={{
+              <LiveClock style={{
                 fontSize:20,fontFamily:"var(--font-sans), Inter, system-ui, sans-serif",color:"var(--text-2)",
                 background:"var(--card)",border:"1px solid var(--border)",
                 borderRadius:10,padding:"6px 16px",letterSpacing:"0.04em"
-              }}>
-                {now.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit",second:"2-digit", hour12: true})}
-              </div>
+              }} />
             </div>
 
             {/* Active sessions */}
@@ -2040,9 +2112,6 @@ function OwnerDashboard({ role, onLogout }) {
               )}
               {filteredActiveSessions.map(sess => {
                 const emp = employeeById.get(sess.employeeId);
-                const elapsed = Math.floor((now - new Date(sess.clockIn)) / 1000);
-                const eStr = `${String(Math.floor(elapsed/3600)).padStart(2,"0")}:${String(Math.floor((elapsed%3600)/60)).padStart(2,"0")}:${String(elapsed%60).padStart(2,"0")}`;
-                const hrs = elapsed / 3600;
                 return (
                   <div key={sess.id} style={{
                     background:"var(--card)",border:"1px solid rgba(62,207,122,.3)",borderRadius:16,
@@ -2064,8 +2133,12 @@ function OwnerDashboard({ role, onLogout }) {
                       </div>
                     </div>
                     <div className="mobile-left" style={{textAlign:"right",flex:"1 1 150px"}}>
-                      <div style={{fontSize:26,fontFamily:"var(--font-sans), Inter, system-ui, sans-serif",color:"var(--success)",fontWeight:600,letterSpacing:"0.02em"}}>{eStr}</div>
-                      {isOwner && <div style={{fontSize:12,color:"var(--muted)", marginBottom: 8}}>₹{((hrs) * (emp?.hourlyRate || 0)).toFixed(2)} earned</div>}
+                      <ShiftElapsed
+                        startedAt={sess.clockIn}
+                        style={{fontSize:26,fontFamily:"var(--font-sans), Inter, system-ui, sans-serif",color:"var(--success)",fontWeight:600,letterSpacing:"0.02em"}}
+                        hourlyRate={emp?.hourlyRate}
+                        showEarnings={isOwner}
+                      />
                       <button className="btn btn-outline btn-xs" onClick={() => clockOutSingle(sess.id, sess.name)}>
                         <StopCircle size={12} style={{marginRight: 2}}/> Clock Out
                       </button>
@@ -2114,6 +2187,7 @@ function OwnerDashboard({ role, onLogout }) {
               </p>
             )}
           </div>
+          </ClockProvider>
         )}
 
         {/* ── TIMESHEETS ── */}
@@ -2449,8 +2523,8 @@ function OwnerDashboard({ role, onLogout }) {
             <form className="card" onSubmit={changeStaffPassword}>
               <h4 style={{fontSize:16,marginBottom:6}}>Change Password</h4>
               <p style={{color:"var(--muted)",fontSize:13,marginBottom:16}}>
-                {isOwner && passwordTarget === "manager"
-                  ? "Set a new Manager password. The current Manager password is not required."
+                {isOwner
+                  ? `Set a new ${passwordTarget === "owner" ? "Owner" : "Manager"} password. The current password is not required.`
                   : "The new password is securely hashed and saved to Firestore."}
               </p>
               {isOwner && (
@@ -2475,9 +2549,9 @@ function OwnerDashboard({ role, onLogout }) {
               )}
               {[
                 ...(
-                  isOwner && passwordTarget === "manager"
+                  isOwner
                     ? []
-                    : [{key:"currentPassword",id:"current-staff-password",label:isOwner ? "Current owner password" : "Current manager password",autoComplete:"current-password"}]
+                    : [{key:"currentPassword",id:"current-staff-password",label:"Current manager password",autoComplete:"current-password"}]
                 ),
                 {key:"newPassword",id:"new-staff-password",label:"New password",autoComplete:"new-password"},
                 {key:"confirmPassword",id:"confirm-staff-password",label:"Confirm new password",autoComplete:"new-password"},
@@ -2694,9 +2768,7 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
     if (saving) return;
     if (!form.name || !form.pin || !form.branch) { setErr("Name, PIN, and Branch are required."); return; }
     if (form.pin.length !== EMPLOYEE_PIN_LENGTH || !/^\d+$/.test(form.pin)) { setErr("PIN must be exactly 6 digits."); return; }
-    const latestEmployees = await storage.get("employees");
-    if (latestEmployees === undefined) { setErr("Could not load staff data. Check your connection and try again."); return; }
-    const currentEmployees = Array.isArray(latestEmployees) ? latestEmployees : [];
+    const currentEmployees = employees;
     if (currentEmployees.find(e=>e.pin===form.pin && e.id !== editingId)) { setErr("PIN already taken."); return; }
     
     let updated;
@@ -3000,6 +3072,7 @@ export function AppClient() {
     if (!session) return;
     let timeoutId;
     let lastRefreshAt = Date.now();
+    let lastActivityHandledAt = 0;
     const resetTimer = () => {
       clearTimeout(timeoutId);
       timeoutId = setTimeout(() => {
@@ -3019,7 +3092,6 @@ export function AppClient() {
             JSON.stringify({...employeeSession,lastActivityAt:activityAt}),
           );
         }
-        return;
       }
 
       void fetch("/api/auth/session", {
@@ -3033,11 +3105,17 @@ export function AppClient() {
     };
 
     resetTimer();
+    const handleActivity = () => {
+      const activityAt = Date.now();
+      if (activityAt - lastActivityHandledAt < 1000) return;
+      lastActivityHandledAt = activityAt;
+      resetTimer();
+    };
     const events = ["mousemove", "keydown", "scroll", "touchstart", "click"];
-    events.forEach(e => window.addEventListener(e, resetTimer));
+    events.forEach(e => window.addEventListener(e, handleActivity, { passive: true }));
     return () => {
       clearTimeout(timeoutId);
-      events.forEach(e => window.removeEventListener(e, resetTimer));
+      events.forEach(e => window.removeEventListener(e, handleActivity));
     };
   }, [session, handleLogout]);
 
@@ -3052,24 +3130,6 @@ export function AppClient() {
       <main className="route-state" aria-busy="true" aria-live="polite">
         <span className="spinner" aria-hidden="true" />
         <span className="sr-only">Restoring your session</span>
-      </main>
-    );
-  }
-
-  if (session && !isFirebaseConfigured) {
-    return (
-      <main className="route-state">
-        <section className="state-card" role="alert">
-          <p className="eyebrow">Firebase setup required</p>
-          <h1>Connect the new Firestore project</h1>
-          <p>
-            Add all six NEXT_PUBLIC_FIREBASE_* values to .env, then restart the
-            Next.js server.
-          </p>
-          <button className="route-action" onClick={handleLogout}>
-            Sign out
-          </button>
-        </section>
       </main>
     );
   }

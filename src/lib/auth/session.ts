@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 export const STAFF_SESSION_COOKIE = "amigos_staff_session";
+export const EMPLOYEE_SESSION_COOKIE = "amigos_employee_session_token";
 export const STAFF_SESSION_TTL_SECONDS = 15 * 60;
 
 export type StaffRole = "owner" | "manager";
@@ -14,6 +15,12 @@ export function isSecureRequest(request: Request) {
 
 interface StaffSessionPayload {
   role: StaffRole;
+  expiresAt: number;
+}
+
+interface EmployeeSessionPayload {
+  role: "employee";
+  employeeId: string;
   expiresAt: number;
 }
 
@@ -38,6 +45,16 @@ export function createStaffSession(role: StaffRole) {
   return `${encoded}.${sign(encoded)}`;
 }
 
+export function createEmployeeSession(employeeId: string) {
+  const payload: EmployeeSessionPayload = {
+    role: "employee",
+    employeeId,
+    expiresAt: Date.now() + STAFF_SESSION_TTL_SECONDS * 1000,
+  };
+  const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  return `${encoded}.${sign(encoded)}`;
+}
+
 export function readStaffSession(token?: string): StaffSessionPayload | null {
   if (!token) return null;
   const [encoded, signature] = token.split(".");
@@ -55,6 +72,35 @@ export function readStaffSession(token?: string): StaffSessionPayload | null {
     ) as StaffSessionPayload;
     if (
       !["owner", "manager"].includes(payload.role) ||
+      payload.expiresAt <= Date.now()
+    ) {
+      return null;
+    }
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+export function readEmployeeSession(token?: string): EmployeeSessionPayload | null {
+  if (!token) return null;
+  const [encoded, signature] = token.split(".");
+  if (!encoded || !signature) return null;
+
+  const expected = Buffer.from(sign(encoded));
+  const received = Buffer.from(signature);
+  if (expected.length !== received.length || !timingSafeEqual(expected, received)) {
+    return null;
+  }
+
+  try {
+    const payload = JSON.parse(
+      Buffer.from(encoded, "base64url").toString("utf8"),
+    ) as EmployeeSessionPayload;
+    if (
+      payload.role !== "employee" ||
+      typeof payload.employeeId !== "string" ||
+      !payload.employeeId ||
       payload.expiresAt <= Date.now()
     ) {
       return null;
