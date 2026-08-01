@@ -2,6 +2,8 @@ import { timingSafeEqual } from "node:crypto";
 
 import { NextResponse } from "next/server";
 
+import { isDeviceAllowed, normalizeAllowedDeviceIds } from "@/lib/auth/device-access";
+
 import {
   createEmployeeSession,
   EMPLOYEE_SESSION_COOKIE,
@@ -37,7 +39,7 @@ function matchesDevelopmentPin(pin: string) {
 }
 
 export async function POST(request: Request) {
-  let body: { pin?: unknown };
+  let body: { pin?: unknown; deviceId?: unknown };
   try {
     body = (await request.json()) as typeof body;
   } catch {
@@ -70,8 +72,17 @@ export async function POST(request: Request) {
     }
 
     const documentSnapshot = snapshot.docs[0];
+    const employeeData = documentSnapshot.data() as Record<string, unknown>;
+    const deviceId = typeof body.deviceId === "string" ? body.deviceId.trim() : "";
+    const allowedDevices = normalizeAllowedDeviceIds(employeeData.allowedDeviceIds);
+    if (!isDeviceAllowed(allowedDevices, deviceId)) {
+      return NextResponse.json(
+        { error: "This device is not authorized for this employee account." },
+        { status: 401 },
+      );
+    }
     const employee = {
-      ...employeeProfile(documentSnapshot.data()),
+      ...employeeProfile(employeeData),
       id: documentSnapshot.id,
     };
     const response = NextResponse.json({ employee });

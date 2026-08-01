@@ -1,12 +1,14 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, lazy, Suspense, createContext, useContext } from "react";
-import { 
+import {
   CheckCircle, StopCircle, User, Briefcase, Calendar, 
   Download, Clock, Check, X, Inbox, ClipboardList, IndianRupee, 
   Users, Settings, LayoutDashboard, Timer, Phone, Mail, MapPin, 
   Edit2, Trash2, Flag, Eye, EyeOff, ChevronLeft, ChevronRight
 } from "lucide-react";
+
+import { normalizeAllowedDeviceIds } from "../../lib/auth/device-access";
 const dashboardSubscribers = new Map();
 let dashboardPollTimer = null;
 let pendingDashboardRefresh = null;
@@ -638,6 +640,7 @@ function LoginScreen({ onLogin }) {
   const [error, setError] = useState("");
   const [pinChecking, setPinChecking] = useState(false);
   const [installPrompt, setInstallPrompt] = useState(null);
+  const [deviceId, setDeviceId] = useState("");
   const [isIOS, setIsIOS] = useState(false);
   const [isMobileDevice, setIsMobileDevice] = useState(false);
   const [isStandalone, setIsStandalone] = useState(false);
@@ -675,6 +678,18 @@ function LoginScreen({ onLogin }) {
     return () => window.removeEventListener('beforeinstallprompt', handleInstallPrompt);
   }, []);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const storedDeviceId = window.localStorage.getItem("amigos_device_id");
+    if (storedDeviceId) {
+      setDeviceId(storedDeviceId);
+    } else {
+      const generated = window.crypto?.randomUUID?.() || `${window.navigator.userAgentData?.brands?.[0]?.brand || "device"}-${Date.now().toString(36)}`;
+      window.localStorage.setItem("amigos_device_id", generated);
+      setDeviceId(generated);
+    }
+  }, []);
+
   const tryEmployeePin = useCallback(async (p) => {
     if (p.length < EMPLOYEE_PIN_LENGTH || pinChecking) return;
     setPinChecking(true);
@@ -683,7 +698,7 @@ function LoginScreen({ onLogin }) {
       const response = await fetch("/api/auth/employee-login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pin: p }),
+        body: JSON.stringify({ pin: p, deviceId }),
       });
       const result = await response.json();
       if (!response.ok) {
@@ -698,7 +713,7 @@ function LoginScreen({ onLogin }) {
     } finally {
       setPinChecking(false);
     }
-  }, [onLogin, pinChecking]);
+  }, [deviceId, onLogin, pinChecking]);
 
   const handlePinChange = (nextPin) => {
     setPin(nextPin);
@@ -764,6 +779,11 @@ function LoginScreen({ onLogin }) {
 
       {!mode ? (
         <div className="fade-up" style={{width:"100%",maxWidth:320,display:"flex",flexDirection:"column",gap:12}}>
+          {deviceId && (
+            <div style={{fontSize:11,color:"var(--muted)",textAlign:"center",wordBreak:"break-all",padding:"8px 10px",borderRadius:10,border:"1px solid var(--border)",background:"rgba(255,255,255,0.03)"}}>
+              Device ID: <span style={{fontWeight:600,color:"var(--text-2)"}}>{deviceId}</span>
+            </div>
+          )}
           <button className="btn btn-gold" style={{padding:"17px",fontSize:15,borderRadius:13,width:"100%"}}
             onClick={() => { setMode("employee"); setError(""); }}>
             <User size={18} /> Employee Login
@@ -2758,7 +2778,7 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
-  const [form, setForm] = useState({name:"",pin:"",employmentType:"Full-time",standardHours:"10",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly", phone:"", email:"", gender:"", address:""});
+  const [form, setForm] = useState({name:"",pin:"",employmentType:"Full-time",standardHours:"10",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly", phone:"", email:"", gender:"", address:"", allowedDeviceIds:""});
   const [err, setErr] = useState("");
   const [confirmRemoveId, setConfirmRemoveId] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -2772,7 +2792,11 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
     if (currentEmployees.find(e=>e.pin===form.pin && e.id !== editingId)) { setErr("PIN already taken."); return; }
     
     let updated;
-    const baseEmp = { ...form, standardHours: parseFloat(form.standardHours)||10 };
+    const baseEmp = {
+      ...form,
+      standardHours: parseFloat(form.standardHours)||10,
+      allowedDeviceIds: normalizeAllowedDeviceIds(form.allowedDeviceIds),
+    };
     if (canViewSalary) {
       baseEmp.hourlyRate = parseFloat(form.hourlyRate) || 0;
       baseEmp.dailySalary = parseFloat(form.dailySalary) || 0;
@@ -2800,7 +2824,7 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
     }
     setSaving(false);
     setEmployees(updated);
-    setForm({name:"",pin:"",employmentType:"Full-time",standardHours:"10",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly", phone:"", email:"", gender:"", address:""});
+    setForm({name:"",pin:"",employmentType:"Full-time",standardHours:"10",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly", phone:"", email:"", gender:"", address:"", allowedDeviceIds:""});
     setAdding(false); setEditingId(null); setErr(""); setConfirmRemoveId(null);
   };
 
@@ -2825,7 +2849,8 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
       branch: emp.branch || branches[0] || "",
       paymentCycle: canViewSalary ? (emp.paymentCycle || "Weekly") : "Weekly",
       phone: emp.phone || "", email: emp.email || "",
-      gender: emp.gender || "", address: emp.address || ""
+      gender: emp.gender || "", address: emp.address || "",
+      allowedDeviceIds: Array.isArray(emp.allowedDeviceIds) ? emp.allowedDeviceIds.join(", ") : (emp.allowedDeviceIds || "")
     });
     setEditingId(emp.id);
     setAdding(true);
@@ -2841,7 +2866,7 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
     <div className="fade-up">
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20, flexWrap: "wrap", gap: "10px"}}>
         <h3 style={{fontSize:20}}>Staff Members ({fEmployees.length})</h3>
-        <button className="btn btn-gold btn-sm" onClick={() => { setConfirmRemoveId(null); setAdding(p=>!p); if(adding) { setEditingId(null); setForm({name:"",pin:"",employmentType:"Full-time",standardHours:"10",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly", phone:"", email:"", gender:"", address:""}); }}}>
+        <button className="btn btn-gold btn-sm" onClick={() => { setConfirmRemoveId(null); setAdding(p=>!p); if(adding) { setEditingId(null); setForm({name:"",pin:"",employmentType:"Full-time",standardHours:"10",hourlyRate:"",dailySalary:"",role:"Sales Executive",branch:branches[0]||"", paymentCycle:"Weekly", phone:"", email:"", gender:"", address:"", allowedDeviceIds:""}); }}}>
           {adding ? "Cancel" : "+ Add Staff"}
         </button>
       </div>
@@ -2929,6 +2954,20 @@ function EmployeeManager({ employees, setEmployees, selectedBranch, branches = [
               <div>
                 <label className="field-label">Address</label>
                 <input type="text" placeholder="Address" value={form.address} onChange={e => setForm(p=>({...p,address:e.target.value}))} className="input"/>
+              </div>
+            </div>
+            <div style={{marginBottom:12}}>
+              <label className="field-label">Allowed Device IDs</label>
+              <textarea
+                placeholder="Enter device IDs separated by commas or new lines"
+                value={form.allowedDeviceIds}
+                onChange={e => setForm(p=>({...p, allowedDeviceIds: e.target.value}))}
+                className="input"
+                rows={3}
+                style={{minHeight:80, resize:"vertical"}}
+              />
+              <div style={{fontSize:11, color:"var(--muted)", marginTop:6}}>
+                Leave blank to allow any device. Otherwise only matching device IDs can log in.
               </div>
             </div>
           </div>
